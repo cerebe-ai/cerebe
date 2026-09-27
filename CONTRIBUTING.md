@@ -44,6 +44,9 @@ make install
 make demo
 ```
 
+Changes to `install.sh` come with its offline tests: `sh tests/install/run.sh` runs the real
+script against a stubbed `curl` and a fixture release, with no network access.
+
 ## Reporting security issues
 
 **Do not open a public issue for a security vulnerability.** See [SECURITY.md](./SECURITY.md).

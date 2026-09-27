@@ -16,8 +16,9 @@
 #
 # Releases resolve through the GitHub API by this repository's immutable
 # numeric ID, and every download URL comes from that API response, so an
-# owner or repo rename cannot break or redirect an install. That is one
-# anonymous API call per run, pinned or not (GitHub allows 60/hour per IP).
+# owner or repo rename cannot break or redirect a release download. (The
+# one-liner above still fetches this script itself by owner/repo.) That is
+# one anonymous API call per run, pinned or not (GitHub allows 60/hour per IP).
 set -eu
 
 REPO_ID=1181720228
@@ -59,9 +60,17 @@ TARGET="${OS}_${ARCH}"
 # the cd into it stays where it was, below the install-dir block.
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 REL="$tmp/release.json"
-if [ -n "$VERSION" ]; then REL_URL="${API}/tags/v${VERSION}"; else REL_URL="${API}/latest"; fi
-code=$(curl -sSL -H 'Accept: application/vnd.github+json' -o "$REL" -w '%{http_code}' "$REL_URL") \
-  || err "could not reach the GitHub API: ${REL_URL}"
+# A version goes into a URL and into file names below: plain versions only.
+valid_version() { case "$1" in ''|*[!0-9A-Za-z.+_-]*) return 1 ;; esac; }
+if [ -n "$VERSION" ]; then
+  valid_version "$VERSION" || err "CEREBE_VERSION is not a release version: ${CEREBE_VERSION}"
+  REL_URL="${API}/tags/v${VERSION}"
+else
+  REL_URL="${API}/latest"
+fi
+code=$(curl -sSL -o "$REL" -w '%{http_code}' \
+  -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+  "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
 case "$code" in
   200) ;;
   404) err "release not found (HTTP 404): ${REL_URL}" ;;
@@ -75,7 +84,8 @@ esac
 # The match spans a whole member, and a value holding an escape never
 # matches: a parse miss prints nothing, and every caller fails closed on it.
 json_str() {
-  # shellcheck disable=SC2020 # a char-for-char map: the repeats are intended
+  # A char-for-char map: the repeated characters are intended.
+  # shellcheck disable=SC2020
   tr '\n\r\t,{}' '   \n\n\n' < "$REL" | sed -n 's/^ *"'"$1"'" *: *"\([^"\\]*\)" *$/\1/p'
 }
 # asset_url NAME — the release's https://github.com/ download URL whose last
@@ -93,9 +103,8 @@ if [ -n "$VERSION" ]; then
   [ "$TAG" = "v${VERSION}" ] || err "asked for v${VERSION} but GitHub returned ${TAG}"
 else
   VERSION="${TAG#v}"
+  valid_version "$VERSION" || err "unexpected release version: ${VERSION}"
 fi
-# VERSION becomes part of file names below: accept only a plain version.
-case "$VERSION" in ''|*[!0-9A-Za-z.+_-]*) err "unexpected release version: ${VERSION}" ;; esac
 CHECKSUMS_URL=$(asset_url checksums.txt)
 [ -n "$CHECKSUMS_URL" ] || err "no checksums.txt in release v${VERSION}; refusing to install unverified"
 log "Installing Cerebe CLI v${VERSION} (${TARGET}) from ${CHECKSUMS_URL%/*}"
