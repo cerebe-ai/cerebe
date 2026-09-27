@@ -139,6 +139,9 @@ refuses "server error (500)" "GitHub API error (HTTP 500)" cerebe STUB_API_CODE=
 refuses "API unreachable" "could not reach the GitHub API" cerebe STUB_API_DOWN=1
 refuses "pinned version that is not a version" "CEREBE_VERSION is not a release version: 8.17.1/../x" cerebe CEREBE_VERSION=8.17.1/../x
 also "  rejected before any request" requested_nothing
+refuses "pin of a bare v is not latest" "CEREBE_VERSION is not a release version: v" cerebe CEREBE_VERSION=v
+also "  rejected before any request" requested_nothing
+installs "empty CEREBE_VERSION means latest" latest "$V" CEREBE_VERSION=
 
 # --- parse misses fail closed --------------------------------------------------
 refuses "not a release object" "could not read the release tag" cerebe STUB_API_BODY="$(garbage)"

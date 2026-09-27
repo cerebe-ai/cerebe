@@ -61,8 +61,9 @@ TARGET="${OS}_${ARCH}"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 REL="$tmp/release.json"
 # A version goes into a URL and into file names below: plain versions only.
+# Any non-empty CEREBE_VERSION is a pin, so a bare "v" fails, not "latest".
 valid_version() { case "$1" in ''|*[!0-9A-Za-z.+_-]*) return 1 ;; esac; }
-if [ -n "$VERSION" ]; then
+if [ -n "${CEREBE_VERSION:-}" ]; then
   valid_version "$VERSION" || err "CEREBE_VERSION is not a release version: ${CEREBE_VERSION}"
   REL_URL="${API}/tags/v${VERSION}"
 else
