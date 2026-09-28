@@ -1,0 +1,71 @@
+name: install-test
+
+# Offline regression tests for install.sh (tests/install/run.sh): the real
+# script runs against a stubbed curl, a fixture API response and locally
+# built release assets. No network calls, no secrets.
+
+on:
+  pull_request:
+    paths:
+      - "install.sh"
+      - "tests/install/**"
+      - ".github/workflows/install-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - "tests/install/**"
+      - ".github/workflows/install-test.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    name: ${{ matrix.os }} · ${{ matrix.shell }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest   # /bin/sh is dash
+            shell: sh
+          - os: ubuntu-latest
+            shell: bash --posix
+          - os: macos-latest    # /bin/sh is bash 3.2 in POSIX mode
+            shell: sh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Offline installer tests
+        env:
+          TEST_SH: ${{ matrix.shell }}
+        run: sh tests/install/run.sh
+
+  busybox:
+    name: alpine · busybox sh
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Offline installer tests (busybox sh, sed, awk, tar, sha256sum)
+        run: docker run --rm -v "$PWD:/w:ro" -w /w alpine:3 sh tests/install/run.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh

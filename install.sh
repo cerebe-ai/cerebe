@@ -2,7 +2,7 @@
 # Cerebe CLI installer — checksum-verified binaries onto PATH, then (when
 # this is a laptop in a git repo) configure that repo. One line:
 #
-#   curl -fsSL https://raw.githubusercontent.com/momentiq-ai/cerebe/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | sh
 #
 # Run it from the repo you want adopted. CI (`CI` set) and CEREBE_SKIP_REPO=1
 # stay binaries-only. No prompt — curl|sh has no stdin. No local critics.
@@ -13,9 +13,16 @@
 #                            Default /usr/local/bin or ~/.local/bin also
 #                            configures this git repo.
 #   CEREBE_SKIP_REPO=1       binaries only, even with the default install dir
+#
+# Releases resolve through the GitHub API by this repository's immutable
+# numeric ID, and every download URL comes from that API response, so an
+# owner or repo rename cannot break or redirect a release download. (The
+# one-liner above still fetches this script itself by owner/repo.) That is
+# one anonymous API call per run, pinned or not (GitHub allows 60/hour per IP).
 set -eu
 
-REPO="momentiq-ai/cerebe"
+REPO_ID=1181720228
+API="https://api.github.com/repositories/${REPO_ID}/releases"
 BINARIES="cerebe cyclone"
 VERSION="${CEREBE_VERSION:-}"
 VERSION="${VERSION#v}"
@@ -48,14 +55,60 @@ case "$arch" in
 esac
 TARGET="${OS}_${ARCH}"
 
-# --- resolve version (default: latest release tag) ------------------------
-if [ -z "$VERSION" ]; then
-  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name"' | head -1 | sed 's/.*"tag_name" *: *"v\{0,1\}\([^"]*\)".*/\1/')
-  [ -n "$VERSION" ] || err "could not resolve the latest release version from GitHub"
+# --- resolve the release by repo ID (default: latest stable) --------------
+# The temp dir is created here so the API response has somewhere to live;
+# the cd into it stays where it was, below the install-dir block.
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+REL="$tmp/release.json"
+# A version goes into a URL and into file names below: plain versions only.
+# Any non-empty CEREBE_VERSION is a pin, so a bare "v" fails, not "latest".
+valid_version() { case "$1" in ''|*[!0-9A-Za-z.+_-]*) return 1 ;; esac; }
+if [ -n "${CEREBE_VERSION:-}" ]; then
+  valid_version "$VERSION" || err "CEREBE_VERSION is not a release version: ${CEREBE_VERSION}"
+  REL_URL="${API}/tags/v${VERSION}"
+else
+  REL_URL="${API}/latest"
 fi
-BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
-log "Installing Cerebe CLI v${VERSION} (${TARGET}) from ${REPO} Releases"
+code=$(curl -sSL -o "$REL" -w '%{http_code}' \
+  -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+  "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
+case "$code" in
+  200) ;;
+  404) err "release not found (HTTP 404): ${REL_URL}" ;;
+  403|429) err "GitHub API refused ${REL_URL} (HTTP ${code}), usually the anonymous rate limit; retry later" ;;
+  *) err "GitHub API error (HTTP ${code}): ${REL_URL}" ;;
+esac
+
+# json_str KEY — each string value of a "KEY": "..." member of the response,
+# one per line. Commas and braces become line breaks and JSON whitespace a
+# space, so each member sits on one line however the response is formatted.
+# The match spans a whole member, and a value holding an escape never
+# matches: a parse miss prints nothing, and every caller fails closed on it.
+json_str() {
+  # A char-for-char map: the repeated characters are intended.
+  # shellcheck disable=SC2020
+  tr '\n\r\t,{}' '   \n\n\n' < "$REL" | sed -n 's/^ *"'"$1"'" *: *"\([^"\\]*\)" *$/\1/p'
+}
+# asset_url NAME — the release's https://github.com/ download URL whose last
+# path segment is exactly NAME; prints nothing unless exactly one matches.
+asset_url() {
+  json_str browser_download_url | awk -v want="/$1" '
+    index($0, "https://github.com/") == 1 &&
+    substr($0, length($0) - length(want) + 1) == want { n++; url = $0 }
+    END { if (n == 1) print url }'
+}
+
+TAG=$(json_str tag_name | awk '{ n++; t = $0 } END { if (n == 1) print t }')
+[ -n "$TAG" ] || err "could not read the release tag from ${REL_URL}"
+if [ -n "$VERSION" ]; then
+  [ "$TAG" = "v${VERSION}" ] || err "asked for v${VERSION} but GitHub returned ${TAG}"
+else
+  VERSION="${TAG#v}"
+  valid_version "$VERSION" || err "unexpected release version: ${VERSION}"
+fi
+CHECKSUMS_URL=$(asset_url checksums.txt)
+[ -n "$CHECKSUMS_URL" ] || err "no checksums.txt in release v${VERSION}; refusing to install unverified"
+log "Installing Cerebe CLI v${VERSION} (${TARGET}) from ${CHECKSUMS_URL%/*}"
 
 # --- install dir (writable, on PATH) --------------------------------------
 # An explicit CEREBE_INSTALL_DIR is honored (created if needed). Only the DEFAULT
@@ -72,12 +125,14 @@ else
 fi
 
 # --- download + verify + extract each binary ------------------------------
-tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; cd "$tmp"
-curl -fsSLO "${BASE}/checksums.txt" || err "could not download checksums.txt for v${VERSION}"
+cd "$tmp"
+curl -fsSL -o checksums.txt "$CHECKSUMS_URL" || err "could not download checksums.txt for v${VERSION}"
 for bin in $BINARIES; do
   asset="${bin}_${VERSION}_${TARGET}.tar.gz"
   log "→ ${asset}"
-  curl -fsSLO "${BASE}/${asset}" || err "download failed: ${asset}"
+  url=$(asset_url "$asset")
+  [ -n "$url" ] || err "no ${asset} in release v${VERSION}"
+  curl -fsSL -o "$asset" "$url" || err "download failed: ${asset}"
   # Materialize THIS asset's checksum line; fail hard if absent (an empty grep
   # piped to the checker can exit 0), then verify, then extract.
   grep " ${asset}\$" checksums.txt > "${asset}.sha256" \
