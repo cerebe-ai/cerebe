@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | 
 
 Run it **from the repo you want to adopt**. It puts the compiled `cerebe` and `cyclone`
 binaries on your PATH (latest stable release, checksum-verified) and — when you run it
-inside a git repo on your laptop — wires that repo up. That's it. No npm, no pip, no Docker.
+inside a git repo on your computer — wires that repo up. That's it. No npm, no pip, no Docker.
 Needs only `curl` and `git`; macOS and Linux run the binaries, Windows uses the archives below.
 
 - **Pin a version:** `CEREBE_VERSION=8.17.1 curl -fsSL … | sh`
@@ -62,20 +62,20 @@ git hooks — nothing hidden, nothing that phones home:
 | git hooks | Post-commit review + pre-push gate (both no-op until you enable a critic) |
 
 **Day one is lights-out.** With an empty fleet, `cerebe review` and `cerebe gate-push`
-**skip** — pushing is never blocked just because no verdict exists. You opt in to review
-when you're ready. Detected AI CLIs on your machine are printed as a suggestion, never
-switched on for you.
+**skip** — You opt in to reviewwhen you're ready. Detected AI CLIs 
+on your machine are printed as a suggestion.
 
 ---
 
-## Turn on local review (optional)
+## Turn on local review
 
 ```bash
 cerebe model add cursor     # or: claude, codex, gemini, kimi
 cerebe doctor
 ```
 
-Local review drives your **existing AI-app subscriptions** — no API keys. Once a critic is
+Local review uses your **existing AI harness subscriptions** (such as Claude Code, 
+Grok Build, Codex, Cursor, OpenCode) — no API keys. Once a critic is
 enabled, the hooks come alive:
 
 - **post-commit** runs the critic quorum **in the background**, so commits stay instant;
@@ -120,22 +120,9 @@ cerebe schemas list       # published JSON Schemas (config, evidence, artifacts)
 The CLI above runs entirely on your machine and is free to use. **Cerebe Platform** is the
 separate, hosted control plane: install the GitHub App and it reviews every pull request
 with a managed critic fleet, posting the `cerebe` check with signed, per-commit evidence and
-a dashboard — no runner or API keys of your own. It's a paid, managed service, and you do
+a dashboard — no runner or API keys required. It's a paid, managed service, and you do
 **not** need it to use the CLI. See **[cerebe.ai](https://cerebe.ai)**.
 
----
-
-## Make sure you install the right thing
-
-`cerebe` (this repo's binary) is the Factory CLI. These look similar but are **not** it:
-
-| Command | What it actually is |
-|---|---|
-| `pip install cerebe` / `npm i @cerebe/sdk` | The Cerebe cognitive-services SDK — a different product, not the CLI |
-| `npm i @cerebe/cli` | Redirect stub: prints the `install.sh` one-liner and exits 1 |
-| `npm i @momentiq/dark-factory-cli` | Deprecated, frozen npm CLI — do not use it |
-
-Always install the Factory CLI with the `install.sh` one-liner above.
 
 ---
 
