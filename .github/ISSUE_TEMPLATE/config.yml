@@ -4,7 +4,7 @@ contact_links:
     url: https://cerebe.ai/docs
     about: Check the docs — your question might already be answered.
   - name: Security vulnerability
-    url: https://github.com/momentiq-ai/cerebe/security/advisories/new
+    url: https://github.com/cerebe-ai/cerebe/security/advisories/new
     about: Report security issues privately — never in a public issue.
   - name: Account or billing support
     url: mailto:support@cerebe.ai
