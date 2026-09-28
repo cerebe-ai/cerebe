@@ -5,8 +5,8 @@
 <h1 align="center">Cerebe</h1>
 
 <p align="center">
-  <strong>The AI-native software factory.</strong><br/>
-  Build behind a quorum of AI critics and ship behind deterministic gates — one command to start.
+  <strong>The quality engine for AI native software development.</strong><br/>
+  Build with speed and confidence using the most comprehensive AI quality control platform.
 </p>
 
 <p align="center">
