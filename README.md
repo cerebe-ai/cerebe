@@ -37,7 +37,7 @@ Needs only `curl` and `git`; macOS and Linux run the binaries, Windows uses the 
 Already have the binaries and cloned a repo that's **already** set up for Cerebe? Skip the
 curl and just run `cerebe init` in it to wire your local hooks to the committed contract.
 
-Latest stable: **[v8.17.1](https://github.com/cerebe-ai/cerebe/releases/latest)** ·
+Latest: **[stable](https://github.com/cerebe-ai/cerebe/releases/latest)** ·
 [all releases](https://github.com/cerebe-ai/cerebe/releases).
 
 Verify it:
