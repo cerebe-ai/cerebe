@@ -2,7 +2,7 @@
 # Cerebe CLI installer — checksum-verified binaries onto PATH, then (when
 # this is a laptop in a git repo) configure that repo. One line:
 #
-#   curl -fsSL https://raw.githubusercontent.com/momentiq-ai/cerebe/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | sh
 #
 # Run it from the repo you want adopted. CI (`CI` set) and CEREBE_SKIP_REPO=1
 # stay binaries-only. No prompt — curl|sh has no stdin. No local critics.
