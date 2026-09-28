@@ -6,7 +6,7 @@ A single-file, guided walkthrough of every method on Cerebe's `client.rag`: embe
 
 ```bash
 # 1. clone the repo and enter this directory
-git clone https://github.com/momentiq-ai/cerebe.git
+git clone https://github.com/cerebe-ai/cerebe.git
 cd cerebe/examples/rag/python
 
 # 2. set your API key
