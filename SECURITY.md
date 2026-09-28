@@ -11,7 +11,7 @@ discussions, or pull requests.**
 Instead, report them privately through either:
 
 - **GitHub Security Advisories** — use the
-  [Report a vulnerability](https://github.com/momentiq-ai/cerebe/security/advisories/new)
+  [Report a vulnerability](https://github.com/cerebe-ai/cerebe/security/advisories/new)
   button on this repository's Security tab, or
 - **Email** — [security@cerebe.ai](mailto:security@cerebe.ai)
 
