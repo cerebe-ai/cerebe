@@ -115,6 +115,9 @@ also() { # also NAME CMD... — a further assertion about the previous case's re
   name=$1; shift; n=$((n+1)); if "$@"; then report yes "$name"; else report no "$name"; fi
 }
 requested() { grep -q "$1" "$c/urls"; }
+no_api_call() { ! grep -q '^https://api.github.com/' "$c/urls"; }
+downloads_happened() { grep -q '/releases/download/' "$c/urls"; }
+versions_are() { [ "$("$c/bin/cerebe" --version 2>&1)" = "cerebe v$1" ] && [ "$("$c/bin/cyclone" --version 2>&1)" = "cyclone v$1" ]; }
 requested_nothing() { [ ! -s "$c/urls" ]; }
 not() { ! "$@"; }
 
@@ -142,6 +145,22 @@ also "  rejected before any request" requested_nothing
 refuses "pin of a bare v is not latest" "CEREBE_VERSION is not a release version: v" cerebe CEREBE_VERSION=v
 also "  rejected before any request" requested_nothing
 installs "empty CEREBE_VERSION means latest" latest "$V" CEREBE_VERSION=
+
+# --- a caller-supplied release object (CEREBE_RELEASE_JSON) ----------------------
+run CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$FIXTURE"
+report "$([ "$rc" -eq 0 ] && versions_are "$V" && echo yes || echo no)" "a supplied release object installs the pin"
+also "  and makes no API call" no_api_call
+also "  and says so" grep -qF "no GitHub API call" "$c/out"
+also "  the downloads still happened (and were verified)" downloads_happened
+refuses "a supplied object needs a pin" "CEREBE_RELEASE_JSON needs a CEREBE_VERSION pin" cerebe CEREBE_RELEASE_JSON="$FIXTURE"
+also "  rejected before any request" requested_nothing
+refuses "a supplied object for another version" "asked for v0.0.2 but GitHub returned v$V" cerebe \
+  CEREBE_VERSION=0.0.2 CEREBE_RELEASE_JSON="$FIXTURE"
+refuses "a supplied object that does not exist" "CEREBE_RELEASE_JSON is not a readable file" cerebe \
+  CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$W/nope.json"
+also "  rejected before any request" requested_nothing
+refuses "a supplied object is checked like a response" "checksum mismatch for $A" cerebe \
+  CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$FIXTURE" STUB_ASSETS="$(assets_with bytes3 append_byte "$A")"
 
 # --- parse misses fail closed --------------------------------------------------
 refuses "not a release object" "could not read the release tag" cerebe STUB_API_BODY="$(garbage)"
