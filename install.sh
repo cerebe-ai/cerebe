@@ -13,17 +13,20 @@
 #                            Default /usr/local/bin or ~/.local/bin also
 #                            configures this git repo.
 #   CEREBE_SKIP_REPO=1       binaries only, even with the default install dir
-#   GH_TOKEN / GITHUB_TOKEN  authenticate the one GitHub API call (5000/hour
-#                            instead of 60/hour per IP; CI runners share IPs)
+#   CEREBE_RELEASE_JSON=FILE the release object for the CEREBE_VERSION pin,
+#                            already fetched (GET .../releases/tags/v<pin>).
+#                            The script then makes NO API call: for CI that
+#                            fetched it authenticated, since anonymous calls
+#                            share a 60/hour per-IP limit on hosted runners.
+#                            Requires CEREBE_VERSION; every check below still
+#                            runs on it.
 #
 # Releases resolve through the GitHub API by this repository's immutable
 # numeric ID, and every download URL comes from that API response, so an
 # owner or repo rename cannot break or redirect a release download. (The
 # one-liner above still fetches this script itself by owner/repo.) That is
-# one API call per run, pinned or not: anonymous by default (GitHub allows
-# 60/hour per IP), authenticated when GH_TOKEN or GITHUB_TOKEN is set. The
-# token is sent to api.github.com only, never to a download host, and never
-# printed.
+# one anonymous API call per run, pinned or not (GitHub allows 60/hour per IP),
+# or none when the caller supplies CEREBE_RELEASE_JSON.
 set -eu
 
 REPO_ID=1181720228
@@ -74,11 +77,14 @@ if [ -n "${CEREBE_VERSION:-}" ]; then
 else
   REL_URL="${API}/latest"
 fi
-TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-if [ -n "$TOKEN" ]; then
-  code=$(curl -sSL -o "$REL" -w '%{http_code}' -H "Authorization: Bearer ${TOKEN}" \
-    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-    "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
+if [ -n "${CEREBE_RELEASE_JSON:-}" ]; then
+  # A supplied release object stands in for the API response. It must be for
+  # the pinned version (checked against its tag_name below, like any response).
+  [ -n "${CEREBE_VERSION:-}" ] || err "CEREBE_RELEASE_JSON needs a CEREBE_VERSION pin (the release it describes)"
+  [ -f "$CEREBE_RELEASE_JSON" ] && [ -r "$CEREBE_RELEASE_JSON" ] || err "CEREBE_RELEASE_JSON is not a readable file: ${CEREBE_RELEASE_JSON}"
+  cp "$CEREBE_RELEASE_JSON" "$REL"
+  REL_URL="CEREBE_RELEASE_JSON (${CEREBE_RELEASE_JSON})"
+  code=200
 else
   code=$(curl -sSL -o "$REL" -w '%{http_code}' \
     -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
@@ -87,10 +93,7 @@ fi
 case "$code" in
   200) ;;
   404) err "release not found (HTTP 404): ${REL_URL}" ;;
-  401) err "GitHub API rejected the token in GH_TOKEN/GITHUB_TOKEN (HTTP 401): ${REL_URL}" ;;
-  403|429)
-    if [ -n "$TOKEN" ]; then err "GitHub API refused ${REL_URL} (HTTP ${code}) with the token from GH_TOKEN/GITHUB_TOKEN; check its access and rate limit"; fi
-    err "GitHub API refused ${REL_URL} (HTTP ${code}), usually the anonymous rate limit; set GH_TOKEN or GITHUB_TOKEN, or retry later" ;;
+  403|429) err "GitHub API refused ${REL_URL} (HTTP ${code}), usually the anonymous rate limit; retry later, or pass CEREBE_RELEASE_JSON" ;;
   *) err "GitHub API error (HTTP ${code}): ${REL_URL}" ;;
 esac
 
