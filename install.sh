@@ -81,7 +81,9 @@ if [ -n "${CEREBE_RELEASE_JSON:-}" ]; then
   # A supplied release object stands in for the API response. It must be for
   # the pinned version (checked against its tag_name below, like any response).
   [ -n "${CEREBE_VERSION:-}" ] || err "CEREBE_RELEASE_JSON needs a CEREBE_VERSION pin (the release it describes)"
-  [ -f "$CEREBE_RELEASE_JSON" ] && [ -r "$CEREBE_RELEASE_JSON" ] || err "CEREBE_RELEASE_JSON is not a readable file: ${CEREBE_RELEASE_JSON}"
+  if [ ! -f "$CEREBE_RELEASE_JSON" ] || [ ! -r "$CEREBE_RELEASE_JSON" ]; then
+    err "CEREBE_RELEASE_JSON is not a readable file: ${CEREBE_RELEASE_JSON}"
+  fi
   cp "$CEREBE_RELEASE_JSON" "$REL"
   REL_URL="CEREBE_RELEASE_JSON (${CEREBE_RELEASE_JSON})"
   log "Using the release object from CEREBE_RELEASE_JSON (no GitHub API call)"
