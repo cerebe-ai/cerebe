@@ -84,6 +84,7 @@ if [ -n "${CEREBE_RELEASE_JSON:-}" ]; then
   [ -f "$CEREBE_RELEASE_JSON" ] && [ -r "$CEREBE_RELEASE_JSON" ] || err "CEREBE_RELEASE_JSON is not a readable file: ${CEREBE_RELEASE_JSON}"
   cp "$CEREBE_RELEASE_JSON" "$REL"
   REL_URL="CEREBE_RELEASE_JSON (${CEREBE_RELEASE_JSON})"
+  log "Using the release object from CEREBE_RELEASE_JSON (no GitHub API call)"
   code=200
 else
   code=$(curl -sSL -o "$REL" -w '%{http_code}' \

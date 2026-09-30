@@ -150,6 +150,7 @@ installs "empty CEREBE_VERSION means latest" latest "$V" CEREBE_VERSION=
 run CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$FIXTURE"
 report "$([ "$rc" -eq 0 ] && versions_are "$V" && echo yes || echo no)" "a supplied release object installs the pin"
 also "  and makes no API call" no_api_call
+also "  and says so" grep -qF "no GitHub API call" "$c/out"
 also "  the downloads still happened (and were verified)" downloads_happened
 refuses "a supplied object needs a pin" "CEREBE_RELEASE_JSON needs a CEREBE_VERSION pin" cerebe CEREBE_RELEASE_JSON="$FIXTURE"
 also "  rejected before any request" requested_nothing
