@@ -13,12 +13,17 @@
 #                            Default /usr/local/bin or ~/.local/bin also
 #                            configures this git repo.
 #   CEREBE_SKIP_REPO=1       binaries only, even with the default install dir
+#   GH_TOKEN / GITHUB_TOKEN  authenticate the one GitHub API call (5000/hour
+#                            instead of 60/hour per IP; CI runners share IPs)
 #
 # Releases resolve through the GitHub API by this repository's immutable
 # numeric ID, and every download URL comes from that API response, so an
 # owner or repo rename cannot break or redirect a release download. (The
 # one-liner above still fetches this script itself by owner/repo.) That is
-# one anonymous API call per run, pinned or not (GitHub allows 60/hour per IP).
+# one API call per run, pinned or not: anonymous by default (GitHub allows
+# 60/hour per IP), authenticated when GH_TOKEN or GITHUB_TOKEN is set. The
+# token is sent to api.github.com only, never to a download host, and never
+# printed.
 set -eu
 
 REPO_ID=1181720228
@@ -69,13 +74,23 @@ if [ -n "${CEREBE_VERSION:-}" ]; then
 else
   REL_URL="${API}/latest"
 fi
-code=$(curl -sSL -o "$REL" -w '%{http_code}' \
-  -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-  "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
+TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [ -n "$TOKEN" ]; then
+  code=$(curl -sSL -o "$REL" -w '%{http_code}' -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
+else
+  code=$(curl -sSL -o "$REL" -w '%{http_code}' \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "$REL_URL") || err "could not reach the GitHub API: ${REL_URL}"
+fi
 case "$code" in
   200) ;;
   404) err "release not found (HTTP 404): ${REL_URL}" ;;
-  403|429) err "GitHub API refused ${REL_URL} (HTTP ${code}), usually the anonymous rate limit; retry later" ;;
+  401) err "GitHub API rejected the token in GH_TOKEN/GITHUB_TOKEN (HTTP 401): ${REL_URL}" ;;
+  403|429)
+    if [ -n "$TOKEN" ]; then err "GitHub API refused ${REL_URL} (HTTP ${code}) with the token from GH_TOKEN/GITHUB_TOKEN; check its access and rate limit"; fi
+    err "GitHub API refused ${REL_URL} (HTTP ${code}), usually the anonymous rate limit; set GH_TOKEN or GITHUB_TOKEN, or retry later" ;;
   *) err "GitHub API error (HTTP ${code}): ${REL_URL}" ;;
 esac
 

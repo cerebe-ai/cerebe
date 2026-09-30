@@ -30,20 +30,22 @@ mkdir -p "$W/bin"
 
 # Stub curl. The API answers with $STUB_API_BODY and $STUB_API_CODE; release
 # downloads are served from $STUB_ASSETS by file name; any other URL is
-# unreachable. Every requested URL is appended to $STUB_LOG.
+# unreachable. Every requested URL is appended to $STUB_LOG, and to
+# $STUB_AUTH_LOG with the Authorization header it carried ("-" for none).
 cat > "$W/bin/curl" <<'STUB'
 #!/bin/sh
-out=; fmt=; url=
+out=; fmt=; url=; auth=-
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out=$2; shift 2 ;;
     -w) fmt=$2; shift 2 ;;
-    -H) shift 2 ;;
+    -H) case "$2" in Authorization:*) auth=${2#Authorization: } ;; esac; shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
 printf '%s\n' "$url" >> "$STUB_LOG"
+printf '%s %s\n' "$url" "$auth" >> "$STUB_AUTH_LOG"
 case "$url" in
   https://api.github.com/*)
     [ -z "${STUB_API_DOWN:-}" ] || { echo "curl: (7) Failed to connect" >&2; exit 7; }
@@ -87,10 +89,12 @@ drop_line() { grep -v " $1\$" checksums.txt > s; mv s checksums.txt; }
 
 n=0; failed=0
 run() { # run ENV=VAL... — the installer under $TEST_SH, from a clean non-git cwd
-  n=$((n+1)); c="$W/case$n"; mkdir -p "$c/cwd"; : > "$c/urls"
+  n=$((n+1)); c="$W/case$n"; mkdir -p "$c/cwd"; : > "$c/urls"; : > "$c/auth"
   # TEST_SH may carry flags, e.g. "bash --posix", so it stays unquoted.
+  # A token in the caller's environment must not leak into a case: only the
+  # case's own ENV=VAL can set one.
   # shellcheck disable=SC2086
-  (cd "$c/cwd" && env PATH="$W/bin:$PATH" STUB_LOG="$c/urls" STUB_ASSETS="$W/assets" \
+  (unset GH_TOKEN GITHUB_TOKEN; cd "$c/cwd" && env PATH="$W/bin:$PATH" STUB_LOG="$c/urls" STUB_AUTH_LOG="$c/auth" STUB_ASSETS="$W/assets" \
     STUB_API_BODY="$FIXTURE" CEREBE_INSTALL_DIR="$c/bin" "$@" $TEST_SH "$INSTALLER") > "$c/out" 2>&1
   rc=$?
 }
@@ -115,6 +119,10 @@ also() { # also NAME CMD... — a further assertion about the previous case's re
   name=$1; shift; n=$((n+1)); if "$@"; then report yes "$name"; else report no "$name"; fi
 }
 requested() { grep -q "$1" "$c/urls"; }
+api_auth_is() { grep -qxF "$API/$1 $2" "$c/auth"; }  # api_auth_is PATH AUTH — that API request carried exactly AUTH
+no_download_auth() { ! grep -v '^https://api.github.com/' "$c/auth" | grep -qv ' -$'; }
+downloads_happened() { grep -q '^https://github.com/.*/releases/download/' "$c/auth"; }
+out_lacks() { ! grep -qF "$1" "$c/out"; }
 requested_nothing() { [ ! -s "$c/urls" ]; }
 not() { ! "$@"; }
 
@@ -142,6 +150,26 @@ also "  rejected before any request" requested_nothing
 refuses "pin of a bare v is not latest" "CEREBE_VERSION is not a release version: v" cerebe CEREBE_VERSION=v
 also "  rejected before any request" requested_nothing
 installs "empty CEREBE_VERSION means latest" latest "$V" CEREBE_VERSION=
+
+# --- authentication (GH_TOKEN / GITHUB_TOKEN) ------------------------------------
+installs "no token: the API call is anonymous" latest "$V"
+also "  sent no Authorization" api_auth_is latest -
+installs "GH_TOKEN authenticates the API call" "tags/v$V" "$V" CEREBE_VERSION="$V" GH_TOKEN=tok-gh-123
+also "  the API call carried the token" api_auth_is "tags/v$V" "Bearer tok-gh-123"
+also "  downloads still happened" downloads_happened
+also "  no download carried the token" no_download_auth
+also "  the token is never printed" out_lacks tok-gh-123
+installs "GITHUB_TOKEN works too" latest "$V" GITHUB_TOKEN=tok-actions-456
+also "  the API call carried it" api_auth_is latest "Bearer tok-actions-456"
+also "  no download carried it" no_download_auth
+installs "GH_TOKEN wins over GITHUB_TOKEN" latest "$V" GH_TOKEN=tok-gh GITHUB_TOKEN=tok-actions
+also "  the API call carried GH_TOKEN" api_auth_is latest "Bearer tok-gh"
+installs "an empty token is no token" latest "$V" GH_TOKEN=
+also "  sent no Authorization" api_auth_is latest -
+refuses "token rejected (401)" "rejected the token in GH_TOKEN/GITHUB_TOKEN (HTTP 401)" cerebe STUB_API_CODE=401 GH_TOKEN=tok-bad-789
+also "  the token is never printed" out_lacks tok-bad-789
+refuses "token refused (403)" "(HTTP 403) with the token from GH_TOKEN/GITHUB_TOKEN" cerebe STUB_API_CODE=403 GH_TOKEN=tok-gh-123
+also "  the token is never printed" out_lacks tok-gh-123
 
 # --- parse misses fail closed --------------------------------------------------
 refuses "not a release object" "could not read the release tag" cerebe STUB_API_BODY="$(garbage)"
