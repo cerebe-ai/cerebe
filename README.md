@@ -21,7 +21,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | sh
+curl -fsSL https://cerebe.ai/install.sh | sh
 ```
 
 Run it **from the repo you want to adopt**. It puts the compiled `cerebe` and `cyclone`
