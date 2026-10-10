@@ -1,7 +1,7 @@
 name: readme-links
 
 # README.md's links to the Cerebe Factory GitHub App's install page carry
-# `state=release-readme` (cerebe-ai/dark-factory Cycle 107 EC25). Offline: it
+# `state=release-readme`, which records where an install came from. Offline: it
 # reads the file, nothing else.
 
 on:
@@ -21,6 +21,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: readme-links-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   readme-links:
     name: README install links carry their state
@@ -32,6 +36,8 @@ jobs:
           persist-credentials: false
       - name: Every App install link names the README
         run: sh tests/readme/run.sh README.md
+      - name: The check refuses what it must (cases)
+        run: sh tests/readme/cases.sh
       - name: The check refuses a bare link (positive control)
         run: |
           sed 's#installations/new?state=release-readme#installations/new#' README.md > "$RUNNER_TEMP/README.bare.md"
@@ -46,3 +52,5 @@ jobs:
             echo "::error::tests/readme/run.sh accepted a README with no install link"
             exit 1
           fi
+      - name: shellcheck
+        run: shellcheck --version && shellcheck -s sh tests/readme/run.sh tests/readme/cases.sh
