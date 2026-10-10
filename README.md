@@ -120,10 +120,9 @@ cerebe schemas list       # published JSON Schemas (config, evidence, artifacts)
 The CLI above runs entirely on your machine and is free to use. **Cerebe Platform** is the
 separate, hosted control plane: **[install the Cerebe Factory GitHub App](https://github.com/apps/cerebe-factory/installations/new?state=release-readme)**
 and Cerebe agents review every pull request, posting the verdict as a check on it with
-signed, per-commit evidence and a dashboard — no runner or API keys required. Plans and
-pricing are at [cerebe.ai/pricing](https://cerebe.ai/pricing). A required (binding) Cerebe
-check needs a paid plan. You do **not** need it to use the CLI, which is free on any
-repository. See **[cerebe.ai](https://cerebe.ai)**.
+signed, per-commit evidence and a dashboard — no runner or API keys required. It is free for
+open source; a private repository needs a plan or a trial. You do **not** need it to use the
+CLI. See **[cerebe.ai](https://cerebe.ai)**.
 
 
 ---
