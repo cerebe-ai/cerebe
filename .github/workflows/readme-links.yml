@@ -1,0 +1,41 @@
+name: readme-links
+
+# README.md's links to the Cerebe Factory GitHub App's install page carry
+# `state=release-readme` (cerebe-ai/dark-factory Cycle 107 EC25). Offline: it
+# reads the file, nothing else.
+
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "tests/readme/**"
+      - ".github/workflows/readme-links.yml"
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "tests/readme/**"
+      - ".github/workflows/readme-links.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  readme-links:
+    name: README install links carry their state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Every App install link names the README
+        run: sh tests/readme/run.sh README.md
+      - name: The check refuses a bare link (positive control)
+        run: |
+          sed 's#installations/new?state=release-readme#installations/new#' README.md > "$RUNNER_TEMP/README.bare.md"
+          if sh tests/readme/run.sh "$RUNNER_TEMP/README.bare.md"; then
+            echo "::error::tests/readme/run.sh accepted a README whose install link has no state"
+            exit 1
+          fi
