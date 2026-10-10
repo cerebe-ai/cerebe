@@ -39,3 +39,10 @@ jobs:
             echo "::error::tests/readme/run.sh accepted a README whose install link has no state"
             exit 1
           fi
+      - name: The check refuses a README with no install link (positive control)
+        run: |
+          grep -vF 'installations/new' README.md > "$RUNNER_TEMP/README.none.md"
+          if sh tests/readme/run.sh "$RUNNER_TEMP/README.none.md"; then
+            echo "::error::tests/readme/run.sh accepted a README with no install link"
+            exit 1
+          fi
