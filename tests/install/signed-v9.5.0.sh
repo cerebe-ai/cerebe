@@ -229,6 +229,85 @@ else
   say no "missing provenance installs once the provenance check is removed"; sed 's/^/#   /' "$W/out"
 fi
 
+# --- a PATH verifier that rejects falls through to the pinned binary ------
+# Cosign v2 rejects the v0.3 bundle. A stub that exits 1 stands in for it.
+# The pinned binary is downloaded with real curl; release assets stay local.
+REAL_CURL=$(command -v curl)
+mkdir -p "$W/bin-fallback" "$W/reject-cosign" "$W/reject-slsa"
+cat > "$W/bin-fallback/curl" << EOF
+#!/bin/sh
+for a in "\$@"; do
+  case "\$a" in
+    https://github.com/sigstore/*|https://github.com/slsa-framework/*)
+      exec "$REAL_CURL" "\$@" ;;
+  esac
+done
+out=; url=
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out=\$2; shift 2 ;;
+    -w) shift 2 ;;
+    -H) shift 2 ;;
+    -*) shift ;;
+    *) url=\$1; shift ;;
+  esac
+done
+case "\$url" in
+  https://api.github.com/*)
+    cp "\$STUB_API_BODY" "\$out"; printf '%s' 200; exit 0 ;;
+  https://github.com/*/releases/download/*)
+    f="\$STUB_ASSETS/\${url##*/}"
+    [ -f "\$f" ] || { echo "curl: (22) 404 \$url" >&2; exit 22; }
+    cp "\$f" "\$out"; exit 0 ;;
+esac
+echo "curl: (6) \$url" >&2
+exit 6
+EOF
+printf '%s\n' '#!/bin/sh' 'echo "stub cosign rejects" >&2' 'exit 1' > "$W/reject-cosign/cosign"
+printf '%s\n' '#!/bin/sh' 'echo "stub slsa-verifier rejects" >&2' 'exit 1' > "$W/reject-slsa/slsa-verifier"
+chmod 0755 "$W/bin-fallback/curl" "$W/reject-cosign/cosign" "$W/reject-slsa/slsa-verifier"
+
+run_path() { # run_path DEST ASSETS PATH_PREFIX
+  rm -rf "$1"; mkdir -p "$1"
+  ( cd "$W/cwd" && env PATH="$3:$PATH" \
+      CEREBE_VERSION="$V" CEREBE_INSTALL_DIR="$1" CEREBE_RELEASE_JSON="$W/release.json" \
+      STUB_API_BODY="$W/release.json" STUB_ASSETS="$2" CI=1 \
+      sh "$INSTALLER" ) > "$W/out" 2>&1
+}
+
+run_path "$W/oldcosign" "$W/real" "$W/reject-cosign:$W/bin-fallback:$W/tools" && ok=yes || ok=no
+if [ "$ok" = yes ] && "$W/oldcosign/cerebe" --version 2>&1 | grep -q '9.5.0' \
+   && grep -q 'downloading cosign' "$W/out"; then
+  say yes "a rejecting cosign on PATH installs v9.5.0 through the pinned binary"
+else
+  say no "a rejecting cosign on PATH installs v9.5.0 through the pinned binary"
+  sed 's/^/#   /' "$W/out"
+fi
+run_path "$W/oldcosign-bad" "$W/assets-tamper" "$W/reject-cosign:$W/bin-fallback:$W/tools" && ok=yes || ok=no
+if [ "$ok" = no ] && grep -qF 'checksum signature rejected' "$W/out" && [ ! -e "$W/oldcosign-bad/cerebe" ]; then
+  say yes "tampered checksums are still refused when the PATH cosign rejects"
+else
+  say no "tampered checksums are still refused when the PATH cosign rejects"
+  sed 's/^/#   /' "$W/out"
+fi
+run_path "$W/oldslsa" "$W/real" "$W/reject-slsa:$W/bin-fallback:$W/tools" && ok=yes || ok=no
+if [ "$ok" = yes ] && "$W/oldslsa/cerebe" --version 2>&1 | grep -q '9.5.0' \
+   && grep -q 'downloading slsa-verifier' "$W/out"; then
+  say yes "a rejecting slsa-verifier on PATH installs v9.5.0 through the pinned binary"
+else
+  say no "a rejecting slsa-verifier on PATH installs v9.5.0 through the pinned binary"
+  sed 's/^/#   /' "$W/out"
+fi
+copy_assets "$W/assets-slsa-tamper"
+printf 'X' >> "$W/assets-slsa-tamper/cerebe_${V}_${os}_${arch}.tar.gz"
+run_path "$W/oldslsa-bad" "$W/assets-slsa-tamper" "$W/reject-slsa:$W/bin-fallback:$W/tools" && ok=yes || ok=no
+if [ "$ok" = no ] && grep -qF 'provenance rejected' "$W/out" && [ ! -e "$W/oldslsa-bad/cerebe" ]; then
+  say yes "a tampered archive is still refused when the PATH slsa-verifier rejects"
+else
+  say no "a tampered archive is still refused when the PATH slsa-verifier rejects"
+  sed 's/^/#   /' "$W/out"
+fi
+
 echo "1..$n"
 if [ "$failed" -eq 0 ]; then echo "# all $n passed"; else echo "# $failed of $n FAILED"; fi
 [ "$failed" -eq 0 ]

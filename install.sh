@@ -104,26 +104,49 @@ tool_sha() {
   esac
 }
 
-# ensure_verifier NAME VERSION REPO — PATH, or the official binary checked
-# against the embedded sha256. A mismatch refuses. Nothing here is a bypass.
-ensure_verifier() {
+# install_pinned NAME VERSION REPO — the official binary, checked against the
+# embedded sha256, at $tmp/tools/NAME. Returns 1 if the download fails. A
+# checksum mismatch refuses: that file is not the pinned tool. A tool already
+# on PATH is not used here.
+install_pinned() {
   name=$1
   version=$2
   repo=$3
-  command -v "$name" >/dev/null 2>&1 && return 0
-  sum=$(tool_sha "$name") || err "no embedded sha256 for $name on $TARGET — refusing to verify with an untrusted $name"
   mkdir -p "$tmp/tools"
   dest="$tmp/tools/$name"
+  if [ -x "$dest" ]; then
+    return 0
+  fi
+  sum=$(tool_sha "$name") || err "no embedded sha256 for $name on $TARGET — refusing to verify with an untrusted $name"
   url="https://github.com/${repo}/releases/download/${version}/${name}-${OS}-${ARCH}"
-  log "downloading ${name} ${version} (not on PATH)"
-  curl -fsSL -o "$dest" "$url" || err "could not download ${name} ${version}"
+  log "downloading ${name} ${version}"
+  curl -fsSL -o "$dest" "$url" || return 1
   # A file, not a pipe: macOS /sbin/sha256sum -c does not read stdin.
   printf '%s  %s\n' "$sum" "$(basename "$dest")" > "$tmp/tools/$name.sha256"
   (cd "$tmp/tools" && $SHACHK "$name.sha256") >/dev/null \
     || err "${name} ${version} checksum mismatch — refusing to verify with an untrusted ${name}"
   chmod 0755 "$dest"
-  PATH="$tmp/tools:$PATH"
-  export PATH
+}
+
+# A verifier on PATH is tried first. Cosign v2 rejects the v0.3 bundle, so a
+# rejection is not the answer: the pinned binary verifies again. The install
+# is refused only when that pinned binary also rejects. Nothing skips the check.
+cosign_accepts() {
+  "$1" verify-blob \
+    --bundle "$BUNDLE_NAME" \
+    --certificate-identity "$CERT_IDENTITY" \
+    --certificate-oidc-issuer "$CERT_ISSUER" \
+    checksums.txt >/dev/null
+}
+slsa_accepts() {
+  tool=$1
+  shift
+  "$tool" verify-artifact \
+    --provenance-path "$PROVENANCE_NAME" \
+    --source-uri "$PROVENANCE_SOURCE" \
+    --source-branch "$PROVENANCE_BRANCH" \
+    --builder-id "$PROVENANCE_BUILDER" \
+    "$@" >/dev/null
 }
 
 # verify_bundle_asset — download the bundle and require cosign to accept it
@@ -134,13 +157,14 @@ verify_bundle_asset() {
   curl -fsSL -o "$BUNDLE_NAME" "$url" \
     || err "release v${VERSION} has no ${BUNDLE_NAME} — refusing to install an unsigned release"
   [ -s "$BUNDLE_NAME" ] || err "release v${VERSION} has no ${BUNDLE_NAME} — refusing to install an unsigned release"
-  ensure_verifier cosign "$COSIGN_VERSION" "$COSIGN_REPO"
-  cosign verify-blob \
-    --bundle "$BUNDLE_NAME" \
-    --certificate-identity "$CERT_IDENTITY" \
-    --certificate-oidc-issuer "$CERT_ISSUER" \
-    checksums.txt >/dev/null \
-    || err "checksum signature rejected for ${CERT_IDENTITY}"
+  if command -v cosign >/dev/null 2>&1 && cosign_accepts cosign; then
+    return 0
+  fi
+  if install_pinned cosign "$COSIGN_VERSION" "$COSIGN_REPO" \
+     && cosign_accepts "$tmp/tools/cosign"; then
+    return 0
+  fi
+  err "checksum signature rejected for ${CERT_IDENTITY}"
 }
 
 # verify_provenance_asset ARCHIVE... — download the provenance and require
@@ -152,14 +176,14 @@ verify_provenance_asset() {
     || err "release v${VERSION} has no ${PROVENANCE_NAME} — refusing to install a release with no provenance"
   [ -s "$PROVENANCE_NAME" ] || err "release v${VERSION} has no ${PROVENANCE_NAME} — refusing to install a release with no provenance"
   [ $# -ge 1 ] || err "no archives to verify"
-  ensure_verifier slsa-verifier "$SLSA_VERIFIER_VERSION" "$SLSA_VERIFIER_REPO"
-  slsa-verifier verify-artifact \
-    --provenance-path "$PROVENANCE_NAME" \
-    --source-uri "$PROVENANCE_SOURCE" \
-    --source-branch "$PROVENANCE_BRANCH" \
-    --builder-id "$PROVENANCE_BUILDER" \
-    "$@" >/dev/null \
-    || err "provenance rejected for v${VERSION} — refusing to install"
+  if command -v slsa-verifier >/dev/null 2>&1 && slsa_accepts slsa-verifier "$@"; then
+    return 0
+  fi
+  if install_pinned slsa-verifier "$SLSA_VERIFIER_VERSION" "$SLSA_VERIFIER_REPO" \
+     && slsa_accepts "$tmp/tools/slsa-verifier" "$@"; then
+    return 0
+  fi
+  err "provenance rejected for v${VERSION} — refusing to install"
 }
 
 # --- resolve the release by repo ID (default: latest stable) --------------
