@@ -2,7 +2,7 @@
 # Cerebe CLI installer — provenance-verified binaries onto PATH, then (when
 # this is a laptop in a git repo) configure that repo. One line:
 #
-#   curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | sh
+#   curl -fsSL https://cerebe.ai/install.sh | sh
 #
 # Run it from the repo you want adopted. CI (`CI` set) and CEREBE_SKIP_REPO=1
 # stay binaries-only. No prompt — curl|sh has no stdin. No local critics.
@@ -16,7 +16,8 @@
 # A release with no bundle or no provenance is refused.
 #
 # Env overrides:
-#   CEREBE_VERSION=8.4.1     pin a version (default: latest stable release)
+#   CEREBE_VERSION=9.5.0     pin a version (default: latest stable). A release
+#                            with no signature or provenance is refused.
 #   CEREBE_INSTALL_DIR=DIR   install target AND binaries-only (CI / soak).
 #                            Default /usr/local/bin or ~/.local/bin also
 #                            configures this git repo.
@@ -160,11 +161,10 @@ verify_bundle_asset() {
   if command -v cosign >/dev/null 2>&1 && cosign_accepts cosign; then
     return 0
   fi
-  if install_pinned cosign "$COSIGN_VERSION" "$COSIGN_REPO" \
-     && cosign_accepts "$tmp/tools/cosign"; then
-    return 0
-  fi
-  err "checksum signature rejected for ${CERT_IDENTITY}"
+  install_pinned cosign "$COSIGN_VERSION" "$COSIGN_REPO" \
+    || err "could not download cosign ${COSIGN_VERSION} — refusing to install"
+  cosign_accepts "$tmp/tools/cosign" \
+    || err "checksum signature rejected for ${CERT_IDENTITY}"
 }
 
 # verify_provenance_asset ARCHIVE... — download the provenance and require
@@ -179,11 +179,10 @@ verify_provenance_asset() {
   if command -v slsa-verifier >/dev/null 2>&1 && slsa_accepts slsa-verifier "$@"; then
     return 0
   fi
-  if install_pinned slsa-verifier "$SLSA_VERIFIER_VERSION" "$SLSA_VERIFIER_REPO" \
-     && slsa_accepts "$tmp/tools/slsa-verifier" "$@"; then
-    return 0
-  fi
-  err "provenance rejected for v${VERSION} — refusing to install"
+  install_pinned slsa-verifier "$SLSA_VERIFIER_VERSION" "$SLSA_VERIFIER_REPO" \
+    || err "could not download slsa-verifier ${SLSA_VERIFIER_VERSION} — refusing to install"
+  slsa_accepts "$tmp/tools/slsa-verifier" "$@" \
+    || err "provenance rejected for v${VERSION} — refusing to install"
 }
 
 # --- resolve the release by repo ID (default: latest stable) --------------

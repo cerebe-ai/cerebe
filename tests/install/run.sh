@@ -66,8 +66,10 @@ EXPECT_IDENTITY=$(sed -n "s/^CERT_IDENTITY='\\(.*\\)'\$/\\1/p" "$INSTALLER")
 EXPECT_ISSUER=$(sed -n "s/^CERT_ISSUER='\\(.*\\)'\$/\\1/p" "$INSTALLER")
 EXPECT_SOURCE=$(sed -n "s/^PROVENANCE_SOURCE='\\(.*\\)'\$/\\1/p" "$INSTALLER")
 EXPECT_BUILDER=$(sed -n "s/^PROVENANCE_BUILDER='\\(.*\\)'\$/\\1/p" "$INSTALLER")
-[ -n "$EXPECT_IDENTITY" ] && [ -n "$EXPECT_ISSUER" ] && [ -n "$EXPECT_SOURCE" ] && [ -n "$EXPECT_BUILDER" ] \
-  || { echo "installer is missing the pinned identity"; exit 1; }
+if [ -z "$EXPECT_IDENTITY" ] || [ -z "$EXPECT_ISSUER" ] || [ -z "$EXPECT_SOURCE" ] || [ -z "$EXPECT_BUILDER" ]; then
+  echo "installer is missing the pinned identity"
+  exit 1
+fi
 
 # Stub cosign. A missing --certificate-identity accepts, so a refusal that
 # only happens because the flag is absent is not this stub. A present identity
@@ -288,7 +290,7 @@ refuses "a supplied object for another version" "asked for v0.0.2 but GitHub ret
 refuses "a supplied object that does not exist" "CEREBE_RELEASE_JSON is not a readable file" cerebe \
   CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$W/nope.json"
 also "  rejected before any request" requested_nothing
-refuses "a supplied object is checked like a response" "provenance rejected for v$V" cerebe \
+refuses "a supplied object is checked like a response" "could not download slsa-verifier" cerebe \
   CEREBE_VERSION="$V" CEREBE_RELEASE_JSON="$FIXTURE" STUB_ASSETS="$(assets_with bytes3 append_byte "$A")"
 
 # --- parse misses fail closed --------------------------------------------------
@@ -315,10 +317,10 @@ refuses "suffix and prefix look-alikes" "no $A in release v$V" cerebe \
 
 # --- integrity (unchanged checks, still enforced) ------------------------------
 refuses "tampered checksums.txt" "checksum mismatch for $A" cerebe STUB_ASSETS="$(assets_with sums flip_checksums)"
-refuses "tampered asset" "provenance rejected for v$V" cerebe STUB_ASSETS="$(assets_with bytes append_byte "$A")"
+refuses "tampered asset" "could not download slsa-verifier" cerebe STUB_ASSETS="$(assets_with bytes append_byte "$A")"
 refuses "missing checksum line" "no checksum entry for $A" cerebe STUB_ASSETS="$(assets_with line drop_line "$A")"
-refuses "tampered second binary" "provenance rejected for v$V" cyclone STUB_ASSETS="$(assets_with bytes2 append_byte "$Y")"
-refuses "checksum bytes the signature does not cover" "checksum signature rejected" cerebe \
+refuses "tampered second binary" "could not download slsa-verifier" cyclone STUB_ASSETS="$(assets_with bytes2 append_byte "$Y")"
+refuses "checksum bytes the signature does not cover" "could not download cosign" cerebe \
   STUB_ASSETS="$(assets_with sumbyte append_sums)"
 saved=$INSTALLER
 drop_check bundle
@@ -340,7 +342,7 @@ INSTALLER=$saved
 sed 's#cli-release.yml@refs/heads/main#cli-release.yml@refs/heads/not-main#' "$saved" > "$W/wrong-id.sh"
 chmod 0755 "$W/wrong-id.sh"
 INSTALLER="$W/wrong-id.sh"
-refuses "wrong identity" "checksum signature rejected" cerebe
+refuses "wrong identity" "could not download cosign" cerebe
 also "  cosign was given the wrong identity" grep -q 'refs/heads/not-main' "$c/cosign"
 grep -v -- '--certificate-identity' "$W/wrong-id.sh" > "$W/no-identity.sh"
 chmod 0755 "$W/no-identity.sh"

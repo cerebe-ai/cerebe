@@ -85,7 +85,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: shellcheck
-        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/setup/run.sh
+        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
 
       - name: Setup action pins the verifiers and runs install.sh
         run: sh tests/setup/run.sh

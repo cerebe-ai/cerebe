@@ -24,14 +24,15 @@ absent() {
     printf 'ok %d - %s\n' "$n" "$2"
   fi
 }
-need 'sigstore/cosign-installer@v4.1.2' 'uses the pinned cosign-installer'
+need 'sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6' 'pins cosign-installer v4.1.2 by commit'
 need 'cosign-release: v3.0.6' 'pins cosign v3.0.6'
-need 'slsa-framework/slsa-verifier/actions/installer@v2.7.1' 'uses the pinned slsa-verifier installer'
-# The patterns are literal text from action.yml. They must not expand.
+need 'slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6' 'pins the slsa-verifier installer v2.7.1 by commit'
+need 'repositories/1181720228/releases' 'fetches the release with the job token'
+need 'CEREBE_RELEASE_JSON' 'hands that object to install.sh'
+# The path is literal text from action.yml.
 # shellcheck disable=SC2016
-need 'raw.githubusercontent.com/${GITHUB_ACTION_REPOSITORY}/${ref}/install.sh' 'fetches install.sh from the same ref'
-# shellcheck disable=SC2016
-need 'sh "$script"' 'runs that install.sh'
+need '${GITHUB_ACTION_PATH}/../install.sh' 'runs the install.sh that shipped with the action'
+absent 'raw.githubusercontent.com' 'does not download a second install.sh'
 absent 'CEREBE_SKIP' 'has no skip variable'
 absent 'bypass' 'has no bypass'
 echo "1..$n"
