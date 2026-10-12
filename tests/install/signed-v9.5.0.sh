@@ -63,10 +63,17 @@ exec "$W/tools/slsa-verifier" "\$@"
 EOF
 chmod 0755 "$W/bin-wrap/cosign" "$W/bin-wrap/slsa-verifier"
 
-# Stub curl serves the asset dir by file name and the release JSON for the API.
-# cosign and slsa-verifier speak HTTP themselves; they do not use this curl.
+# Stub curl serves the release assets. A verifier download is the real
+# binary: when the PATH tool rejects, install.sh fetches the pinned one
+# and that binary has to be what refuses a tampered checksum.
 cat > "$W/bin-wrap/curl" << 'STUB'
 #!/bin/sh
+for a in "$@"; do
+  case "$a" in
+    https://github.com/sigstore/*|https://github.com/slsa-framework/*)
+      exec /usr/bin/curl "$@" ;;
+  esac
+done
 out=; url=
 while [ $# -gt 0 ]; do
   case "$1" in
