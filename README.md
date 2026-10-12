@@ -25,11 +25,13 @@ curl -fsSL https://cerebe.ai/install.sh | sh
 ```
 
 Run it **from the repo you want to adopt**. It puts the compiled `cerebe` and `cyclone`
-binaries on your PATH (latest stable release, checksum-verified) and — when you run it
-inside a git repo on your computer — wires that repo up. That's it. No npm, no pip, no Docker.
+binaries on your PATH and — when you run it inside a git repo on your computer — wires
+that repo up. Before it extracts anything, it checks the release's keyless checksum
+signature and SLSA provenance, then each archive's sha256. A release with no signature
+or no provenance is refused. There is no flag to skip that. No npm, no pip, no Docker.
 Needs only `curl` and `git`; macOS and Linux run the binaries, Windows uses the archives below.
 
-- **Pin a version:** `CEREBE_VERSION=8.17.1 curl -fsSL … | sh`
+- **Pin a version:** `CEREBE_VERSION=9.5.0 curl -fsSL … | sh` (the first signed stable; older releases are refused)
 - **Binaries only** (CI, or don't touch the repo): set `CI=1` or `CEREBE_SKIP_REPO=1`.
 - **Windows:** download the `cerebe_*_windows_*.zip` and `cyclone_*_windows_*.zip` archives
   from [Releases](https://github.com/cerebe-ai/cerebe/releases) and put them on your PATH.

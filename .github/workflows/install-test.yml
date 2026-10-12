@@ -2,19 +2,24 @@ name: install-test
 
 # Offline regression tests for install.sh (tests/install/run.sh): the real
 # script runs against a stubbed curl, a fixture API response and locally
-# built release assets. No network calls, no secrets.
+# built release assets. The signed job is the exception: it downloads the
+# published v9.5.0 release and verifies it. No secrets.
 
 on:
   pull_request:
     paths:
       - "install.sh"
       - "tests/install/**"
+      - "tests/setup/**"
+      - "setup/**"
       - ".github/workflows/install-test.yml"
   push:
     branches: [main]
     paths:
       - "install.sh"
       - "tests/install/**"
+      - "tests/setup/**"
+      - "setup/**"
       - ".github/workflows/install-test.yml"
   workflow_dispatch: {}
 
@@ -60,6 +65,18 @@ jobs:
       - name: Offline installer tests (busybox sh, sed, awk, tar, sha256sum)
         run: docker run --rm -v "$PWD:/w:ro" -w /w alpine:3 sh tests/install/run.sh
 
+  signed:
+    name: signed v9.5.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify the signed release and each refusal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh tests/install/signed-v9.5.0.sh
+
   shellcheck:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -68,4 +85,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: shellcheck
-        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh
+        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
+
+      - name: Setup action pins the verifiers and runs install.sh
+        run: sh tests/setup/run.sh

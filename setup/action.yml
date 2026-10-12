@@ -1,0 +1,63 @@
+name: Setup Cerebe
+description: >-
+  Install cosign and slsa-verifier, then run the install.sh that shipped
+  with this action. The installer verifies the checksum signature and the
+  SLSA provenance and fails closed.
+inputs:
+  version:
+    description: Release version without a leading v. Empty installs releases/latest.
+    required: false
+    default: ""
+  install-dir:
+    description: >-
+      Directory for the cerebe and cyclone binaries. Empty uses a directory
+      under RUNNER_TEMP. The directory is added to PATH.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    # v4.1.2. The tag is not the pin: a moved tag would be a different action.
+    - name: Install cosign
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      with:
+        cosign-release: v3.0.6
+    # v2.7.1
+    - name: Install slsa-verifier
+      uses: slsa-framework/slsa-verifier/actions/installer@ea584f4502babc6f60d9bc799dbbb13c1caa9ee6
+    - name: Resolve the release
+      id: release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REQUESTED: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        json="$RUNNER_TEMP/cerebe-release.json"
+        if [ -n "$REQUESTED" ]; then
+          case "$REQUESTED" in
+            *[!0-9A-Za-z.+_-]*) echo "::error::version is not a release version" >&2; exit 1 ;;
+          esac
+          gh api "repositories/1181720228/releases/tags/v${REQUESTED}" > "$json"
+          ver="$REQUESTED"
+        else
+          gh api repositories/1181720228/releases/latest > "$json"
+          tag=$(jq -r '.tag_name' "$json")
+          ver=${tag#v}
+        fi
+        echo "version=$ver" >> "$GITHUB_OUTPUT"
+        echo "json=$json" >> "$GITHUB_OUTPUT"
+    - name: Install cerebe and cyclone
+      shell: bash
+      env:
+        CEREBE_VERSION: ${{ steps.release.outputs.version }}
+        CEREBE_INSTALL_DIR: ${{ inputs.install-dir }}
+        CEREBE_RELEASE_JSON: ${{ steps.release.outputs.json }}
+      run: |
+        set -euo pipefail
+        # The copy GitHub already resolved for this action, not a second fetch.
+        script="${GITHUB_ACTION_PATH}/../install.sh"
+        dir="${CEREBE_INSTALL_DIR:-$RUNNER_TEMP/cerebe-bin}"
+        CI=1 CEREBE_INSTALL_DIR="$dir" CEREBE_VERSION="${CEREBE_VERSION}" \
+          CEREBE_RELEASE_JSON="${CEREBE_RELEASE_JSON}" sh "$script"
+        echo "$dir" >> "$GITHUB_PATH"

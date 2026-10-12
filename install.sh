@@ -1,14 +1,23 @@
 #!/bin/sh
-# Cerebe CLI installer — checksum-verified binaries onto PATH, then (when
+# Cerebe CLI installer — provenance-verified binaries onto PATH, then (when
 # this is a laptop in a git repo) configure that repo. One line:
 #
-#   curl -fsSL https://raw.githubusercontent.com/cerebe-ai/cerebe/main/install.sh | sh
+#   curl -fsSL https://cerebe.ai/install.sh | sh
 #
 # Run it from the repo you want adopted. CI (`CI` set) and CEREBE_SKIP_REPO=1
 # stay binaries-only. No prompt — curl|sh has no stdin. No local critics.
 #
+# Before a binary is extracted, the release must prove its origin. There is
+# no flag and no environment variable that skips this:
+#   1. checksums.txt, its keyless bundle, and the SLSA provenance
+#   2. cosign accepts the bundle for this exact workflow identity
+#   3. slsa-verifier accepts each archive
+#   4. each archive's sha256 matches the verified checksums.txt
+# A release with no bundle or no provenance is refused.
+#
 # Env overrides:
-#   CEREBE_VERSION=8.4.1     pin a version (default: latest stable release)
+#   CEREBE_VERSION=9.5.0     pin a version (default: latest stable). A release
+#                            with no signature or provenance is refused.
 #   CEREBE_INSTALL_DIR=DIR   install target AND binaries-only (CI / soak).
 #                            Default /usr/local/bin or ~/.local/bin also
 #                            configures this git repo.
@@ -32,6 +41,24 @@ set -eu
 REPO_ID=1181720228
 API="https://api.github.com/repositories/${REPO_ID}/releases"
 BINARIES="cerebe cyclone"
+
+# The identity cli-release.yml's keyless certificate carries on main.
+# Exact, not a pattern. ADR 0065 / cerebe-ai/dark-factory#706.
+CERT_IDENTITY='https://github.com/cerebe-ai/dark-factory/.github/workflows/cli-release.yml@refs/heads/main'
+CERT_ISSUER='https://token.actions.githubusercontent.com'
+PROVENANCE_SOURCE='github.com/cerebe-ai/dark-factory'
+PROVENANCE_BRANCH='main'
+PROVENANCE_BUILDER='https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0'
+BUNDLE_NAME='checksums.txt.sigstore.json'
+PROVENANCE_NAME='cerebe-cyclone.intoto.jsonl'
+
+# Bootstrap trust anchors, bumped deliberately. Official release binaries.
+# cosign v3.0.6 from its published cosign_checksums.txt. slsa-verifier v2.7.1
+# from the bytes at that tag. Used only when the tool is not already on PATH.
+COSIGN_VERSION=v3.0.6
+COSIGN_REPO=sigstore/cosign
+SLSA_VERIFIER_VERSION=v2.7.1
+SLSA_VERIFIER_REPO=slsa-framework/slsa-verifier
 VERSION="${CEREBE_VERSION:-}"
 VERSION="${VERSION#v}"
 # Capture the caller's directory before we cd into the download temp.
@@ -62,6 +89,101 @@ case "$arch" in
   *) err "unsupported arch: $arch";;
 esac
 TARGET="${OS}_${ARCH}"
+
+# tool_sha NAME — the embedded sha256 for NAME on this OS/arch.
+tool_sha() {
+  case "$1:$TARGET" in
+    cosign:darwin_amd64) printf '%s\n' '4c3e7af8372d3ca3296e62fa56f23fcbb5721cc6ac1827900d398f110d7cd280' ;;
+    cosign:darwin_arm64) printf '%s\n' '5fadd012ae6381a6a29ff86a7d39aa873878852f1073fc90b15995961ecfb084' ;;
+    cosign:linux_amd64) printf '%s\n' 'c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74' ;;
+    cosign:linux_arm64) printf '%s\n' 'bedac92e8c3729864e13d4a17048007cfafa79d5deca993a43a90ffe018ef2b8' ;;
+    slsa-verifier:darwin_amd64) printf '%s\n' '4baf25415727821f847a38bccedc86c3e5b17cbfc2eb534cd554feb6c856d6f1' ;;
+    slsa-verifier:darwin_arm64) printf '%s\n' '39abfcf5f1d690c3e889ce3d2d6a8b87711424d83368511868d414e8f8bcb05c' ;;
+    slsa-verifier:linux_amd64) printf '%s\n' '946dbec729094195e88ef78e1734324a27869f03e2c6bd2f61cbc06bd5350339' ;;
+    slsa-verifier:linux_arm64) printf '%s\n' '5d3b2349ede7bfec19e7a21569f18b9f7410145ad12e9584b175370669e14061' ;;
+    *) return 1 ;;
+  esac
+}
+
+# install_pinned NAME VERSION REPO — the official binary, checked against the
+# embedded sha256, at $tmp/tools/NAME. Returns 1 if the download fails. A
+# checksum mismatch refuses: that file is not the pinned tool. A tool already
+# on PATH is not used here.
+install_pinned() {
+  name=$1
+  version=$2
+  repo=$3
+  mkdir -p "$tmp/tools"
+  dest="$tmp/tools/$name"
+  if [ -x "$dest" ]; then
+    return 0
+  fi
+  sum=$(tool_sha "$name") || err "no embedded sha256 for $name on $TARGET — refusing to verify with an untrusted $name"
+  url="https://github.com/${repo}/releases/download/${version}/${name}-${OS}-${ARCH}"
+  log "downloading ${name} ${version}"
+  curl -fsSL -o "$dest" "$url" || return 1
+  # A file, not a pipe: macOS /sbin/sha256sum -c does not read stdin.
+  printf '%s  %s\n' "$sum" "$(basename "$dest")" > "$tmp/tools/$name.sha256"
+  (cd "$tmp/tools" && $SHACHK "$name.sha256") >/dev/null \
+    || err "${name} ${version} checksum mismatch — refusing to verify with an untrusted ${name}"
+  chmod 0755 "$dest"
+}
+
+# A verifier on PATH is tried first. Cosign v2 rejects the v0.3 bundle, so a
+# rejection is not the answer: the pinned binary verifies again. The install
+# is refused only when that pinned binary also rejects. Nothing skips the check.
+cosign_accepts() {
+  "$1" verify-blob \
+    --bundle "$BUNDLE_NAME" \
+    --certificate-identity "$CERT_IDENTITY" \
+    --certificate-oidc-issuer "$CERT_ISSUER" \
+    checksums.txt >/dev/null
+}
+slsa_accepts() {
+  tool=$1
+  shift
+  "$tool" verify-artifact \
+    --provenance-path "$PROVENANCE_NAME" \
+    --source-uri "$PROVENANCE_SOURCE" \
+    --source-branch "$PROVENANCE_BRANCH" \
+    --builder-id "$PROVENANCE_BUILDER" \
+    "$@" >/dev/null
+}
+
+# verify_bundle_asset — download the bundle and require cosign to accept it
+# for CERT_IDENTITY. Missing and tampered checksums both stop here.
+verify_bundle_asset() {
+  url=$(asset_url "$BUNDLE_NAME")
+  [ -n "$url" ] || err "release v${VERSION} has no ${BUNDLE_NAME} — refusing to install an unsigned release"
+  curl -fsSL -o "$BUNDLE_NAME" "$url" \
+    || err "release v${VERSION} has no ${BUNDLE_NAME} — refusing to install an unsigned release"
+  [ -s "$BUNDLE_NAME" ] || err "release v${VERSION} has no ${BUNDLE_NAME} — refusing to install an unsigned release"
+  if command -v cosign >/dev/null 2>&1 && cosign_accepts cosign; then
+    return 0
+  fi
+  install_pinned cosign "$COSIGN_VERSION" "$COSIGN_REPO" \
+    || err "could not download cosign ${COSIGN_VERSION} — refusing to install"
+  cosign_accepts "$tmp/tools/cosign" \
+    || err "checksum signature rejected for ${CERT_IDENTITY}"
+}
+
+# verify_provenance_asset ARCHIVE... — download the provenance and require
+# slsa-verifier to accept every archive before any of them is extracted.
+verify_provenance_asset() {
+  url=$(asset_url "$PROVENANCE_NAME")
+  [ -n "$url" ] || err "release v${VERSION} has no ${PROVENANCE_NAME} — refusing to install a release with no provenance"
+  curl -fsSL -o "$PROVENANCE_NAME" "$url" \
+    || err "release v${VERSION} has no ${PROVENANCE_NAME} — refusing to install a release with no provenance"
+  [ -s "$PROVENANCE_NAME" ] || err "release v${VERSION} has no ${PROVENANCE_NAME} — refusing to install a release with no provenance"
+  [ $# -ge 1 ] || err "no archives to verify"
+  if command -v slsa-verifier >/dev/null 2>&1 && slsa_accepts slsa-verifier "$@"; then
+    return 0
+  fi
+  install_pinned slsa-verifier "$SLSA_VERIFIER_VERSION" "$SLSA_VERIFIER_REPO" \
+    || err "could not download slsa-verifier ${SLSA_VERIFIER_VERSION} — refusing to install"
+  slsa_accepts "$tmp/tools/slsa-verifier" "$@" \
+    || err "provenance rejected for v${VERSION} — refusing to install"
+}
 
 # --- resolve the release by repo ID (default: latest stable) --------------
 # The temp dir is created here so the API response has somewhere to live;
@@ -148,18 +270,34 @@ fi
 # --- download + verify + extract each binary ------------------------------
 cd "$tmp"
 curl -fsSL -o checksums.txt "$CHECKSUMS_URL" || err "could not download checksums.txt for v${VERSION}"
+# The bundle is checked before any archive is extracted. Deleting this call
+# is what the missing-bundle and tampered-checksum refusals pin.
+verify_bundle_asset # cerebe:check bundle
+
+set --
 for bin in $BINARIES; do
   asset="${bin}_${VERSION}_${TARGET}.tar.gz"
   log "→ ${asset}"
   url=$(asset_url "$asset")
   [ -n "$url" ] || err "no ${asset} in release v${VERSION}"
   curl -fsSL -o "$asset" "$url" || err "download failed: ${asset}"
+  set -- "$@" "$asset"
+done
+# Provenance before the checksum lines, and before extract. Deleting this
+# call is what the missing-provenance refusal pins.
+verify_provenance_asset "$@" # cerebe:check provenance
+
+for asset in "$@"; do
   # Materialize THIS asset's checksum line; fail hard if absent (an empty grep
-  # piped to the checker can exit 0), then verify, then extract.
+  # piped to the checker can exit 0), then verify. Extract only after every
+  # archive has passed.
   grep " ${asset}\$" checksums.txt > "${asset}.sha256" \
     || err "no checksum entry for ${asset} — refusing to install unverified"
   [ -s "${asset}.sha256" ] || err "empty checksum entry for ${asset}"
   $SHACHK "${asset}.sha256" >/dev/null || err "checksum mismatch for ${asset} — refusing to install"
+done
+for bin in $BINARIES; do
+  asset="${bin}_${VERSION}_${TARGET}.tar.gz"
   tar -xzf "$asset" "$bin"
   chmod 0755 "$bin"
   mv -f "$bin" "$DIR/$bin"
