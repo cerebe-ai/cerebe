@@ -1,0 +1,43 @@
+name: Setup Cerebe
+description: >-
+  Install cosign and slsa-verifier, then run install.sh. The installer
+  verifies the checksum signature and the SLSA provenance and fails closed.
+inputs:
+  version:
+    description: Release version without a leading v. Empty installs releases/latest.
+    required: false
+    default: ""
+  install-dir:
+    description: >-
+      Directory for the cerebe and cyclone binaries. Empty uses a directory
+      under RUNNER_TEMP. The directory is added to PATH.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      uses: sigstore/cosign-installer@v4.1.2
+      with:
+        cosign-release: v3.0.6
+    - name: Install slsa-verifier
+      uses: slsa-framework/slsa-verifier/actions/installer@v2.7.1
+    - name: Install cerebe and cyclone
+      shell: bash
+      env:
+        CEREBE_VERSION: ${{ inputs.version }}
+        CEREBE_INSTALL_DIR: ${{ inputs.install-dir }}
+      run: |
+        set -euo pipefail
+        # Same commit as this action. A branch ref is shortened so the raw URL
+        # fetches install.sh from that ref, not from a second copy of the checks.
+        ref="${GITHUB_ACTION_REF}"
+        case "$ref" in
+          refs/heads/*) ref=${ref#refs/heads/} ;;
+          refs/tags/*) ref=${ref#refs/tags/} ;;
+        esac
+        script="$RUNNER_TEMP/cerebe-install.sh"
+        curl -fsSL "https://raw.githubusercontent.com/${GITHUB_ACTION_REPOSITORY}/${ref}/install.sh" -o "$script"
+        dir="${CEREBE_INSTALL_DIR:-$RUNNER_TEMP/cerebe-bin}"
+        CI=1 CEREBE_INSTALL_DIR="$dir" CEREBE_VERSION="${CEREBE_VERSION}" sh "$script"
+        echo "$dir" >> "$GITHUB_PATH"
