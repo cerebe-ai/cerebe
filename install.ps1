@@ -55,7 +55,6 @@
         # Native stderr is an ErrorRecord in 5.1. Its exit status is the verdict.
         $ErrorActionPreference = 'Continue'
         try {
-            $LASTEXITCODE = 0
             & $Tool @Arguments > $null 2> $null
             return ($LASTEXITCODE -eq 0)
         } catch { return $false }

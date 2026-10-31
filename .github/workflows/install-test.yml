@@ -37,6 +37,9 @@ jobs:
     name: ${{ matrix.os }} · ${{ matrix.shell }} · offline and signed
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,13 +54,10 @@ jobs:
           go-version: stable
           cache: false
       - name: Offline Windows installer and repository parity tests
-        shell: ${{ matrix.shell }}
         run: ./tests/install/run.ps1
       - name: Override parity with install.sh
-        shell: ${{ matrix.shell }}
         run: ./tests/install/overrides.ps1
       - name: Signed release and refusal tests
-        shell: ${{ matrix.shell }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./tests/install/signed.ps1
