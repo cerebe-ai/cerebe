@@ -33,6 +33,9 @@ func main() {
 		f.Close()
 	}
 	if name != "cosign" && name != "slsa-verifier" {
+		if len(args) > 0 && args[0] == os.Getenv("STUB_FAIL_COMMAND") {
+			os.Exit(1)
+		}
 		if len(args) == 1 && args[0] == "--version" {
 			fmt.Println(name + " v8.17.1")
 		}
