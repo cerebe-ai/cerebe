@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # EC1 deliberately exercises the current Windows image; ARM64 uses its named image (D4).
+        # Deliberately exercise current x64 Windows compatibility; ARM64 uses its explicit hosted image.
         os: [windows-latest, windows-11-arm]
         shell: [powershell, pwsh]
     steps:
