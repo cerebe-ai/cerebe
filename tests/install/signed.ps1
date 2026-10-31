@@ -63,7 +63,7 @@ try {
             if ($rejected) { throw (Get-Content "$case/out" -Raw) }
             foreach ($bin in @('cerebe', 'cyclone')) {
                 $version = & "$case/install/$bin.exe" --version
-                if ($LASTEXITCODE -ne 0 -or !($version -match '\b9\.5\.0\b')) { throw "wrong signed $bin version: $version" }
+                if ($LASTEXITCODE -ne 0 -or !($version -match '(^|\s)v?9\.5\.0($|\s)')) { throw "wrong signed $bin version: $version" }
             }
             $downloads = Get-Content "$case/downloads" -Raw
             if (!$downloads.Contains('cosign-windows-amd64.exe') -or !$downloads.Contains("slsa-verifier-windows-$arch.exe")) { throw 'PATH rejection did not retry pinned builds' }
