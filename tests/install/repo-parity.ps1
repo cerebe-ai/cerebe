@@ -35,7 +35,7 @@ export PATH="$d/bin:$PATH"
 mkdir -p "$STUB_DEFAULT_DIR"
 chmod +x "$d"/bin/* "$d"/src/*
 for b in cerebe cyclone; do tar -czf "$d/assets/${b}_8.17.1_linux_amd64.tar.gz" -C "$d/src" "$b"; done
-(cd "$d/assets" && sha256sum ./*.tar.gz | sed 's#  \./#  #' > checksums.txt)
+(cd "$d/assets" && for f in *.tar.gz; do sum=$(sha256sum "$f"); printf '%s  %s\n' "${sum%% *}" "$f"; done > checksums.txt)
 touch "$d/assets/checksums.txt.sigstore.json" "$d/assets/cerebe-cyclone.intoto.jsonl"
 echo fixture > "$d/assets/checksums.txt.sigstore.json"
 echo fixture > "$d/assets/cerebe-cyclone.intoto.jsonl"
@@ -57,7 +57,10 @@ try {
     & "$env:ProgramFiles/Git/bin/bash.exe" --noprofile --norc "$dir/run.sh" *> "$dir/out"
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
-    if (!(Test-Path "$dir/calls")) { throw "POSIX oracle did not reach the binaries (exit $code): $(Get-Content "$dir/out" -Raw)" }
+    if (!(Test-Path "$dir/calls")) {
+        $manifest = if (Test-Path "$dir/assets/checksums.txt") { Get-Content "$dir/assets/checksums.txt" -Raw | ConvertTo-Json -Compress } else { 'not generated' }
+        throw "POSIX oracle did not reach the binaries (exit $code): $(Get-Content "$dir/out" -Raw); manifest: $manifest"
+    }
     $calls = @(Get-Content "$dir/calls" | Where-Object { $_ -match '^cerebe (install|init|doctor)$' })
     if (($calls -join ';') -ne ($Expected -join ';') -or (($code -ne 0) -ne $ShouldFail)) {
         throw "POSIX parity failed for $Mode : $(Get-Content "$dir/out" -Raw)"
