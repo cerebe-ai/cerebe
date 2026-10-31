@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "install.sh"
+      - "install.ps1"
       - "tests/install/**"
       - "tests/setup/**"
       - "setup/**"
@@ -17,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "install.sh"
+      - "install.ps1"
       - "tests/install/**"
       - "tests/setup/**"
       - "setup/**"
@@ -31,6 +33,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows:
+    name: ${{ matrix.os }} · ${{ matrix.shell }} · offline and signed
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Deliberately exercise current x64 Windows compatibility; ARM64 uses its explicit hosted image.
+        os: [windows-latest, windows-11-arm]
+        shell: [powershell, pwsh]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Go for offline executable fixtures
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - name: Offline Windows installer and repository parity tests
+        run: ./tests/install/run.ps1
+      - name: Override parity with install.sh
+        run: ./tests/install/overrides.ps1
+      - name: Signed release and refusal tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./tests/install/signed.ps1
+
   offline:
     name: ${{ matrix.os }} · ${{ matrix.shell }}
     runs-on: ${{ matrix.os }}
