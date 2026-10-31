@@ -33,10 +33,15 @@ func main() {
 		f.Close()
 	}
 	if name != "cosign" && name != "slsa-verifier" {
+		if len(args) > 0 && args[0] == os.Getenv("STUB_FAIL_COMMAND") {
+			fmt.Fprintln(os.Stderr, "fixture command failed: "+args[0])
+			os.Exit(1)
+		}
 		if len(args) == 1 && args[0] == "--version" {
 			fmt.Println(name + " v8.17.1")
 		}
 		if len(args) > 0 && args[0] == "doctor" && os.Getenv("STUB_DOCTOR_FAIL") != "" {
+			fmt.Fprintln(os.Stderr, "fixture doctor: blocking row")
 			os.Exit(1)
 		}
 		return

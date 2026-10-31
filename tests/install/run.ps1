@@ -1,6 +1,6 @@
 # Offline tests of the real installer. Only transport, verifier decisions and
 # system architecture inputs are fixtures; extraction and installed processes run.
-param([ValidateSet('All', 'EC1', 'EC2', 'EC3', 'EC4', 'EC5')][string]$Criterion = 'All')
+param([ValidateSet('All', 'EC1', 'EC2', 'EC3', 'EC4', 'EC5', 'EC14', 'EC15')][string]$Criterion = 'All')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 $shell = (Get-Process -Id $PID).Path
@@ -8,6 +8,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('cerebe-test-' + [guid]::NewGuid()
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $source = Get-Content "$root/install.ps1" -Raw
+$reachedRefusals = @{}
 $posix = Get-Content "$root/install.sh" -Raw
 $identity = @{}
 foreach ($name in @('CERT_IDENTITY', 'CERT_ISSUER', 'PROVENANCE_SOURCE', 'PROVENANCE_BRANCH', 'PROVENANCE_BUILDER')) {
@@ -34,7 +35,9 @@ function Expand-Archive($LiteralPath, $DestinationPath) {
     Microsoft.PowerShell.Archive\Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath
 }
 Set-Location -LiteralPath $case.Cwd
-. $case.Installer
+# Use stdout for the caught diagnostic: Windows PowerShell 5.1 otherwise
+# formats a child process's stderr as an ErrorRecord and wraps the message.
+try { . $case.Installer } catch { [Console]::Out.WriteLine($_.Exception.Message); exit 1 }
 '@
 Set-Content "$work/driver.ps1" $driver -Encoding ASCII
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -76,6 +79,7 @@ function Case($Name, $Environment = @{}, $Edit = {}, $Rewrite = {}) {
         CEREBE_INSTALL_DIR = "$dir/install"; LOCALAPPDATA = "$dir/local"
         CEREBE_VERSION = '8.17.1'; CEREBE_RELEASE_JSON = "$dir/release.json"
         STUB_LOG = "$dir/tools"; STUB_REJECT_PATH = ''; STUB_REJECT_PINNED = ''; STUB_DOCTOR_FAIL = ''
+        STUB_FAIL_COMMAND = ''; PROCESSOR_ARCHITECTURE = 'AMD64'; PROCESSOR_ARCHITEW6432 = 'AMD64'
     }
     foreach ($key in $Environment.Keys) { $envs[$key] = $Environment[$key] }
     $script = $source -replace "(?m)(\`$(?:COSIGN|SLSA_AMD64|SLSA_ARM64)_SHA256 = )'[a-f0-9]+'", ('$1' + "'$fixtureHash'")
@@ -95,10 +99,44 @@ function Installed($Case) {
         Assert ($LASTEXITCODE -eq 0 -and $actual -eq "$bin v8.17.1") "wrong installed $bin version"
     }
 }
-function Refused($Case, $Reason) {
-    Assert ($Case.Code -ne 0 -and $Case.Output.Contains($Reason)) ("expected refusal $Reason : " + $Case.Output)
+function Refusal-Message($Case, $Identifier) {
+    Assert ($Case.Code -ne 0) 'expected a failed installer process'
+    $message = [regex]::Match($Case.Output, '(?m)^cerebe-install: \[([a-z0-9-]+)\] (\S[^\r\n]*?)\. Next step: (\S[^\r\n]*)\r?$')
+    Assert $message.Success ("refusal must name the failed check and a next step: " + $Case.Output)
+    Assert ($message.Groups[1].Value -ceq $Identifier) ("expected refusal $Identifier : " + $Case.Output)
+    $reachedRefusals[$Identifier] = $true
+}
+function Refused($Case, $Identifier) {
+    Refusal-Message $Case $Identifier
     Assert (!(Test-Path "$($Case.Directory)/install")) 'refusal wrote the install directory'
     Assert (!(Test-Path "$($Case.Directory)/extracts")) 'refusal extracted an archive'
+}
+function Refusal-Coverage($Script) {
+    # Tripwire against an accidentally untested deliberate refusal. Operational
+    # exceptions share the tested fallback; this is not an adversarial detector.
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($Script, [ref]$tokens, [ref]$errors)
+    Assert ($errors.Count -eq 0) 'installer does not parse'
+    $calls = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Refuse'
+    }, $true))
+    Assert ($calls.Count -gt 0) 'installer declares no refusal identifiers'
+    foreach ($call in $calls) {
+        Assert ($call.CommandElements[1] -is [Management.Automation.Language.StringConstantExpressionAst]) 'refusal identifiers must be literal'
+        $id = $call.CommandElements[1].Value
+        Assert ($reachedRefusals.ContainsKey($id)) "refusal identifier has no reached case: $id"
+    }
+    foreach ($statement in $ast.FindAll({ param($node) $node -is [Management.Automation.Language.ThrowStatementAst] }, $true)) {
+        if (!$statement.Pipeline) { continue } # A bare throw rethrows a named refusal.
+        $parent = $statement.Parent
+        while ($parent -and $parent -isnot [Management.Automation.Language.FunctionDefinitionAst]) { $parent = $parent.Parent }
+        Assert ($parent -and $parent.Name -eq 'Refuse') 'a deliberate refusal bypasses its identifier'
+    }
+}
+function Must-Fail($Check, $Reason) {
+    $failed = $false
+    try { & $Check } catch { $failed = $true; Assert ($_.Exception.Message.Contains($Reason)) $_.Exception.Message }
+    Assert $failed "negative control did not fail: $Reason"
 }
 function EC1 {
     $good = Case 'verified'; Installed $good
@@ -111,13 +149,13 @@ function EC1 {
             if ($field -eq 'Hash') { foreach ($entry in $proof.Hashes.PSObject.Properties) { $entry.Value = 'wrong' } } else { $proof.$field = 'wrong' }
             Json "$($c.Directory)/assets/$file" $proof
         }
-        $reason = if ($field -in @('Identity', 'Issuer', 'Sum')) { 'checksum signature rejected' } else { 'provenance rejected' }
+        $reason = if ($field -in @('Identity', 'Issuer', 'Sum')) { 'checksum-signature' } else { 'provenance' }
         Refused $case $reason
     }
     foreach ($file in @('checksums.txt.sigstore.json', 'cerebe-cyclone.intoto.jsonl')) {
-        Refused (Case "missing-$file" @{} { param($c); Remove-Item "$($c.Directory)/assets/$file" }) $file
+        Refused (Case "missing-$file" @{} { param($c); Remove-Item "$($c.Directory)/assets/$file" }) 'download'
     }
-    Refused (Case 'tampered-checksums' @{} { param($c); Add-Content "$($c.Directory)/assets/checksums.txt" 'tampered' }) 'checksum signature rejected'
+    Refused (Case 'tampered-checksums' @{} { param($c); Add-Content "$($c.Directory)/assets/checksums.txt" 'tampered' }) 'checksum-signature'
     Refused (Case 'archive-hash' @{} {
         param($c)
         $assets = "$($c.Directory)/assets"
@@ -127,7 +165,7 @@ function EC1 {
         Set-Content "$assets/checksums.txt" $lines -Encoding ASCII
         $bundle = Get-Content "$assets/checksums.txt.sigstore.json" -Raw | ConvertFrom-Json
         $bundle.Sum = Hash "$assets/checksums.txt"; Json "$assets/checksums.txt.sigstore.json" $bundle
-    }) 'checksum mismatch'
+    }) 'archive-checksum'
     Write-Host 'EC1 passed: accepted release and every refusal before extraction'
 }
 function EC2 {
@@ -135,22 +173,16 @@ function EC2 {
     foreach ($tool in @('cosign', 'slsa-verifier')) {
         $calls = @(Get-Content "$($retry.Directory)/tools" | Where-Object { $_.StartsWith("$tool ") })
         Assert ($calls.Count -eq 2) "$tool did not retry with its pinned build"
-        Refused (Case "pinned-rejects-$tool" @{ STUB_REJECT_PATH = $tool; STUB_REJECT_PINNED = $tool }) 'rejected'
+        $reason = if ($tool -eq 'cosign') { 'checksum-signature' } else { 'provenance' }
+        Refused (Case "pinned-rejects-$tool" @{ STUB_REJECT_PATH = $tool; STUB_REJECT_PINNED = $tool }) $reason
         $case = Case "corrupt-$tool" @{ STUB_REJECT_PATH = $tool } {
             param($c)
             Get-ChildItem "$($c.Directory)/assets" -Filter "$tool-windows-*.exe" | ForEach-Object { Add-Content $_.FullName 'corrupt' }
         }
-        Refused $case "$tool checksum mismatch"
+        Refused $case 'verifier-checksum'
         Assert (@(Get-Content "$($case.Directory)/tools" | Where-Object { $_.StartsWith("$tool ") }).Count -eq 1) 'corrupt downloaded tool ran'
     }
-    $arm = Case 'arm-selection' @{ PROCESSOR_ARCHITECTURE = 'ARM64'; PROCESSOR_ARCHITEW6432 = 'ARM64'; STUB_REJECT_PATH = 'both' }
-    Installed $arm
-    $requests = Get-Content "$($arm.Directory)/downloads" -Raw
-    Assert ($requests.Contains('cosign-windows-amd64.exe') -and $requests.Contains('slsa-verifier-windows-arm64.exe') -and $requests.Contains('windows_arm64.zip')) 'wrong ARM64 assets'
-    Refused (Case 'no-emulation' @{ PROCESSOR_ARCHITECTURE = 'ARM64'; PROCESSOR_ARCHITEW6432 = 'ARM64' } {} {
-        param($s); $s -replace '\$windowsBuild = \[Environment\]::OSVersion.Version.Build', '$windowsBuild = 19045'
-    }) 'x64 emulation'
-    Write-Host 'EC2 passed: pinned retries, corrupt tools never run, ARM64 selection and refusal'
+    Write-Host 'EC2 passed: pinned retries and corrupt tools never run'
 }
 function EC3 {
     $case = Case 'user-path' @{ CEREBE_INSTALL_DIR = ''; CEREBE_SKIP_REPO = '1' }
@@ -187,6 +219,10 @@ function EC4 {
         $expected = if ($mode -eq 'init') { @('cerebe init', 'cerebe doctor') } elseif ($mode -in @('install', 'doctor-blocks')) { @('cerebe install', 'cerebe doctor') } else { @() }
         Assert (($calls -join ';') -eq ($expected -join ';')) "wrong setup dispatch for $mode"
         Assert (($case.Code -ne 0) -eq ($mode -eq 'doctor-blocks')) "wrong doctor status for $mode"
+        if ($mode -eq 'doctor-blocks') {
+            Refusal-Message $case 'repository-doctor'
+            Assert ($case.Output.Contains('fixture doctor: blocking row')) 'blocking doctor diagnostic was lost'
+        }
         # POSIX oracle exercises the shipped install.sh under the same inputs.
         & "$PSScriptRoot/repo-parity.ps1" $case $mode $expected ($case.Code -ne 0)
     }
@@ -198,10 +234,114 @@ function EC5 {
     Installed (Case 'v-prefix' @{ CEREBE_VERSION = 'v8.17.1' })
     $cached = Case 'cached'; Installed $cached
     Assert (!(Get-Content "$($cached.Directory)/downloads" -Raw).Contains('api.github.com')) 'cached release made API call'
-    foreach ($pin in @('v', '../8.17.1', '8.17.1?query', '8.17.1 space')) { Refused (Case ('invalid-' + [guid]::NewGuid()) @{ CEREBE_VERSION = $pin }) 'not a release version' }
-    Refused (Case 'json-without-pin' @{ CEREBE_VERSION = '' }) 'needs a CEREBE_VERSION pin'
-    Refused (Case 'wrong-tag' @{ CEREBE_VERSION = '0.0.0' }) 'asked for v0.0.0'
+    foreach ($pin in @('v', '../8.17.1', '8.17.1?query', '8.17.1 space')) { Refused (Case ('invalid-' + [guid]::NewGuid()) @{ CEREBE_VERSION = $pin }) 'release-version-pin' }
+    Refused (Case 'json-without-pin' @{ CEREBE_VERSION = '' }) 'cached-release-pin'
+    Refused (Case 'wrong-tag' @{ CEREBE_VERSION = '0.0.0' }) 'release-pin-match'
     Write-Host 'EC5 passed: override behavior, pins and cached release validation'
+}
+function EC14 {
+    foreach ($arch in @('amd64', 'arm64')) {
+        # Also model an x64 process running on a native ARM64 machine.
+        $native = if ($arch -eq 'arm64') { 'ARM64' } else { 'AMD64' }
+        $case = Case "architecture-$arch" @{ PROCESSOR_ARCHITEW6432 = $native; STUB_REJECT_PATH = 'both' } {} {
+            param($s); $s -replace '\$windowsBuild = \[Environment\]::OSVersion.Version.Build', '$windowsBuild = 22000'
+        }
+        Installed $case
+        $requests = @(Get-Content "$($case.Directory)/downloads")
+        $tools = @($requests | Where-Object { $_ -match '/(?:cosign|slsa-verifier)-windows-.*\.exe$' })
+        $expected = @(
+            'https://github.com/sigstore/cosign/releases/download/v3.0.6/cosign-windows-amd64.exe',
+            "https://github.com/slsa-framework/slsa-verifier/releases/download/v2.7.1/slsa-verifier-windows-$arch.exe"
+        )
+        Assert (($tools -join ';') -ceq ($expected -join ';')) "wrong $arch verifier builds"
+        $archives = @('cerebe', 'cyclone' | ForEach-Object { "${_}_8.17.1_windows_$arch.zip" })
+        $downloads = @($requests | Where-Object { $_.EndsWith('.zip') } | ForEach-Object { ([uri]$_).Segments[-1] })
+        Assert (($downloads -join ';') -ceq ($archives -join ';')) "wrong $arch archive downloads"
+        Assert (((Get-Content "$($case.Directory)/extracts") -join ';') -ceq ($archives -join ';')) "wrong $arch archive extraction"
+    }
+    Refused (Case 'no-emulation' @{ PROCESSOR_ARCHITECTURE = 'ARM64'; PROCESSOR_ARCHITEW6432 = 'ARM64' } {} {
+        param($s); $s -replace '\$windowsBuild = \[Environment\]::OSVersion.Version.Build', '$windowsBuild = 19045'
+    }) 'windows-arm64-emulation'
+    Write-Host 'EC14 passed: x64 and ARM64 archives and verifier builds; no install without emulation'
+}
+function EC15 {
+    Refused (Case 'not-windows' @{} {} {
+        param($s); $s.Replace('[Environment]::OSVersion.Platform', '[PlatformID]::Unix')
+    }) 'windows-platform'
+    Refused (Case 'unsupported-architecture' @{ PROCESSOR_ARCHITEW6432 = 'x86' }) 'windows-architecture'
+    Refused (Case 'cosign-cannot-emulate' @{ PROCESSOR_ARCHITEW6432 = 'ARM64'; STUB_REJECT_PATH = 'cosign'; STUB_REJECT_PINNED = 'cosign' } {} {
+        param($s); $s -replace '\$windowsBuild = \[Environment\]::OSVersion.Version.Build', '$windowsBuild = 22000'
+    }) 'cosign-emulation'
+    Refused (Case 'missing-release-tag' @{} {
+        param($c); $r = Get-Content "$($c.Directory)/release.json" -Raw | ConvertFrom-Json
+        $r.tag_name = ''; Json "$($c.Directory)/release.json" $r
+    }) 'release-tag'
+    Refused (Case 'invalid-release-tag' @{ CEREBE_VERSION = ''; CEREBE_RELEASE_JSON = '' } {
+        param($c); $r = Get-Content "$($c.Directory)/release.json" -Raw | ConvertFrom-Json
+        $r.tag_name = 'v../bad'; Json "$($c.Directory)/release.json" $r
+    }) 'release-version'
+    foreach ($duplicate in @($false, $true)) {
+        Refused (Case "release-asset-$duplicate" @{} {
+            param($c); $r = Get-Content "$($c.Directory)/release.json" -Raw | ConvertFrom-Json
+            $asset = @($r.assets | Where-Object { $_.browser_download_url.EndsWith('/checksums.txt') })[0]
+            if ($duplicate) { $r.assets += $asset } else { $r.assets = @($r.assets | Where-Object { $_ -ne $asset }) }
+            Json "$($c.Directory)/release.json" $r
+        }) 'release-asset'
+    }
+    foreach ($file in @('checksums.txt.sigstore.json', 'cerebe-cyclone.intoto.jsonl')) {
+        $id = if ($file -eq 'checksums.txt.sigstore.json') { 'checksum-bundle' } else { 'provenance-file' }
+        Refused (Case "empty-$file" @{} { param($c); Clear-Content "$($c.Directory)/assets/$file" }) $id
+    }
+    foreach ($duplicate in @($false, $true)) {
+        Refused (Case "checksum-entry-$duplicate" @{} {
+            param($c); $assets = "$($c.Directory)/assets"
+            $lines = @(Get-Content "$assets/checksums.txt")
+            $target = @($lines | Where-Object { $_.EndsWith('  cerebe_8.17.1_windows_amd64.zip') })[0]
+            $lines = if ($duplicate) { $lines + $target } else { @($lines | Where-Object { $_ -ne $target }) }
+            Set-Content "$assets/checksums.txt" $lines -Encoding ASCII
+            $bundle = Get-Content "$assets/checksums.txt.sigstore.json" -Raw | ConvertFrom-Json
+            $bundle.Sum = Hash "$assets/checksums.txt"; Json "$assets/checksums.txt.sigstore.json" $bundle
+        }) 'archive-checksum-entry'
+    }
+    $missing = Case 'archive-without-binary' @{} {
+        param($c); $assets = "$($c.Directory)/assets"
+        Set-Content "$($c.Directory)/README.txt" 'missing executable'
+        foreach ($zip in Get-ChildItem $assets -Filter 'cerebe_*.zip') {
+            Remove-Item $zip.FullName; Compress-Archive "$($c.Directory)/README.txt" $zip.FullName
+        }
+        Write-Proof $assets
+    }
+    Refusal-Message $missing 'archive-binary'
+    Assert (!(Test-Path "$($missing.Directory)/install")) 'missing executable wrote install directory'
+    $installedFailure = Case 'installed-command-fails' @{ STUB_FAIL_COMMAND = '--version' }
+    Refusal-Message $installedFailure 'installed-binary'
+    Assert ($installedFailure.Output.Contains('fixture command failed: --version')) 'installed command diagnostic was lost'
+    $setupFailure = Case 'setup-command-fails' @{ CEREBE_INSTALL_DIR = ''; STUB_FAIL_COMMAND = 'install' } {
+        param($c); & git -C $c.Cwd init -q; Assert ($LASTEXITCODE -eq 0) 'git fixture failed'
+    }
+    Refusal-Message $setupFailure 'repository-setup'
+    Assert ($setupFailure.Output.Contains('fixture command failed: install')) 'repository setup diagnostic was lost'
+    Refused (Case 'unreadable-release-json' @{ CEREBE_RELEASE_JSON = "$work/absent.json" }) 'installer-operation'
+    Refusal-Coverage $source
+
+    # Each control executes the real installer and then must fail the same
+    # message assertion used above. The first reproduces the base's omission.
+    # Rewriting Refuse changes the fallback's format too, so the outer catch
+    # cannot repair the deliberately broken diagnostic.
+    $legacy = Case 'legacy-refusal' @{ CEREBE_VERSION = '../bad' } {} {
+        param($s); $s.Replace('cerebe-install: [$Check] $Failure. Next step: $NextStep', 'cerebe-install: $Failure')
+    }
+    Must-Fail { Refusal-Message $legacy 'release-version-pin' } 'refusal must name the failed check and a next step'
+    $noNextStep = Case 'refusal-without-next-step' @{ CEREBE_VERSION = '../bad' } {} {
+        param($s); $s.Replace('. Next step: $NextStep', '')
+    }
+    Must-Fail { Refusal-Message $noNextStep 'release-version-pin' } 'refusal must name the failed check and a next step'
+    $noCheck = Case 'refusal-without-check' @{ CEREBE_VERSION = '../bad' } {} {
+        param($s); $s.Replace('$Failure. Next step:', '. Next step:')
+    }
+    Must-Fail { Refusal-Message $noCheck 'release-version-pin' } 'refusal must name the failed check and a next step'
+    Must-Fail { Refusal-Coverage ($source + "`nif (`$false) { Refuse 'uncovered-check' 'Unexercised check failed' 'Retry' }") } 'refusal identifier has no reached case: uncovered-check'
+    Write-Host 'EC15 passed: every declared refusal reached, named check and next step; missing text and coverage controls fail'
 }
 try {
     & go build -o "$work/fixture.exe" "$PSScriptRoot/fixture.go"
@@ -216,7 +356,8 @@ try {
         foreach ($arch in @('amd64', 'arm64')) { Compress-Archive -LiteralPath "$work/$bin.exe" -DestinationPath "$work/base/${bin}_8.17.1_windows_$arch.zip" }
     }
     Write-Proof "$work/base"
-    $criteria = if ($Criterion -eq 'All') { @('EC1', 'EC2', 'EC3', 'EC4', 'EC5') } else { @($Criterion) }
+    $criteria = if ($Criterion -eq 'All') { @('EC1', 'EC2', 'EC3', 'EC4', 'EC5', 'EC14', 'EC15') }
+        elseif ($Criterion -eq 'EC15') { @('EC1', 'EC2', 'EC4', 'EC5', 'EC14', 'EC15') } else { @($Criterion) }
     foreach ($test in $criteria) { & (Get-Item "function:$test") }
 } finally {
     [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
