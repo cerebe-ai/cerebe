@@ -1,6 +1,8 @@
 # Cerebe Windows installer. Works with Windows PowerShell 5.1 and PowerShell 7.
 # Before extraction: verify the checksum bundle, archive provenance, then hashes.
 # No parameter or environment variable skips verification.
+# Windows persists the selected directory in the user PATH, including overrides.
+# "Binaries-only" skips repository setup.
 # Env overrides (same meanings as install.sh):
 #   CEREBE_VERSION       pin a release, optionally prefixed with v
 #   CEREBE_INSTALL_DIR   install target AND binaries-only

@@ -19,6 +19,8 @@ New-Item -ItemType Directory -Path "$work/base", "$work/path-tools" -Force | Out
 $driver = @'
 param($CaseFile)
 $ErrorActionPreference = 'Stop'
+# Load exported functions before wrapping them; auto-import would replace the wrapper.
+Import-Module Microsoft.PowerShell.Archive
 $case = Get-Content -LiteralPath $CaseFile -Raw | ConvertFrom-Json
 foreach ($item in $case.Env.PSObject.Properties) { [Environment]::SetEnvironmentVariable($item.Name, $item.Value, 'Process') }
 function Invoke-WebRequest($Uri, $OutFile, $Headers, [switch]$UseBasicParsing) {

@@ -1,6 +1,7 @@
 # Official verifier bytes and signed v9.5.0 release, with no trust-anchor substitution.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+Import-Module Microsoft.PowerShell.Archive
 $work = Join-Path ([IO.Path]::GetTempPath()) ('cerebe-signed-' + [guid]::NewGuid())
 $source = Get-Content "$PSScriptRoot/../../install.ps1" -Raw
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'amd64' }
