@@ -77,10 +77,10 @@
         $pinned = Pinned-Tool $Name
         if (!(Accepts $pinned $Arguments)) {
             if ($arch -eq 'arm64' -and $Name -eq 'cosign') {
-                Refuse 'cosign-emulation' 'Checksum signature rejected; cosign requires working x64 emulation on Windows ARM64' 'Enable x64 emulation on Windows 11 and retry; if it already works, select a release with a valid checksum signature'
+                Refuse 'cosign-emulation' 'checksum signature rejected; cosign requires working x64 emulation on Windows ARM64' 'Enable x64 emulation on Windows 11 and retry; if it already works, select a release with a valid checksum signature'
             }
             if ($Name -eq 'cosign') {
-                Refuse 'checksum-signature' 'Checksum signature rejected' 'Retry with an official release whose checksum bundle matches the expected signing identity and issuer; report a repeated failure to the publisher'
+                Refuse 'checksum-signature' 'checksum signature rejected' 'Retry with an official release whose checksum bundle matches the expected signing identity and issuer; report a repeated failure to the publisher'
             }
             Refuse 'provenance' 'Release provenance rejected' 'Select an official release with provenance for the expected source repository, branch and builder; report a repeated failure to the publisher'
         }
@@ -103,6 +103,21 @@
         if (!(Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return }
         $root = & git -C $originalDirectory rev-parse --show-toplevel 2> $null
         if ($LASTEXITCODE -eq 0) { return $root }
+    }
+    function Run-Installed($Tool, [string[]]$Arguments) {
+        # Keep native stderr visible without letting its 5.1 ErrorRecord bypass
+        # the caller's check-specific refusal. Output must not become the return value.
+        $ErrorActionPreference = 'Continue'
+        # Native commands update this automatic variable in global scope. A
+        # failed launch must keep a nonzero sentinel rather than an older success.
+        $global:LASTEXITCODE = 1
+        try {
+            & $Tool @Arguments | Out-Host
+            return $global:LASTEXITCODE
+        } catch {
+            Write-Host $_.Exception.Message
+            return 1
+        }
     }
     function Install-Cerebe {
         if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { Refuse 'windows-platform' 'Windows is required' 'Run install.ps1 on Windows, or use install.sh on Linux or macOS' }
@@ -177,8 +192,9 @@
         } finally { Pop-Location }
         Add-UserPath $directory
         foreach ($binary in @('cerebe', 'cyclone')) {
-            & (Join-Path $directory "$binary.exe") --version
-            if ($LASTEXITCODE -ne 0) { Refuse 'installed-binary' "Just-installed $binary did not run" 'Run the installed executable with --version to inspect its error, check Windows architecture compatibility, then reinstall an official release' }
+            if ((Run-Installed (Join-Path $directory "$binary.exe") @('--version')) -ne 0) {
+                Refuse 'installed-binary' "Just-installed $binary did not run" 'Run the installed executable with --version to inspect its error, check Windows architecture compatibility, then reinstall an official release'
+            }
         }
         if ($env:CEREBE_INSTALL_DIR -or $env:CI -or $env:CEREBE_SKIP_REPO) { return }
         $root = Git-Root
@@ -187,10 +203,12 @@
         Push-Location $root
         try {
             $setup = if (Test-Path -LiteralPath 'cerebe/config.json' -PathType Leaf) { 'init' } else { 'install' }
-            & $env:CEREBE_BIN $setup
-            if ($LASTEXITCODE -ne 0) { Refuse 'repository-setup' "cerebe $setup failed" "Correct the error printed by cerebe $setup, then rerun cerebe $setup from the repository root" }
-            & $env:CEREBE_BIN doctor
-            if ($LASTEXITCODE -ne 0) { Refuse 'repository-doctor' 'cerebe doctor reported a blocking row' 'Apply the fix shown on each blocking doctor row, then rerun cerebe doctor from the repository root' }
+            if ((Run-Installed $env:CEREBE_BIN @($setup)) -ne 0) {
+                Refuse 'repository-setup' "cerebe $setup failed" "Correct the error printed by cerebe $setup, then rerun cerebe $setup from the repository root"
+            }
+            if ((Run-Installed $env:CEREBE_BIN @('doctor')) -ne 0) {
+                Refuse 'repository-doctor' 'cerebe doctor reported a blocking row' 'Apply the fix shown on each blocking doctor row, then rerun cerebe doctor from the repository root'
+            }
         } finally { Pop-Location }
     }
     try {

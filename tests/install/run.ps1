@@ -35,7 +35,9 @@ function Expand-Archive($LiteralPath, $DestinationPath) {
     Microsoft.PowerShell.Archive\Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath
 }
 Set-Location -LiteralPath $case.Cwd
-try { . $case.Installer } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
+# Use stdout for the caught diagnostic: Windows PowerShell 5.1 otherwise
+# formats a child process's stderr as an ErrorRecord and wraps the message.
+try { . $case.Installer } catch { [Console]::Out.WriteLine($_.Exception.Message); exit 1 }
 '@
 Set-Content "$work/driver.ps1" $driver -Encoding ASCII
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -317,6 +319,8 @@ function EC15 {
 
     # Each control executes the real installer and then must fail the same
     # message assertion used above. The first reproduces the base's omission.
+    # Rewriting Refuse changes the fallback's format too, so the outer catch
+    # cannot repair the deliberately broken diagnostic.
     $legacy = Case 'legacy-refusal' @{ CEREBE_VERSION = '../bad' } {} {
         param($s); $s.Replace('cerebe-install: [$Check] $Failure. Next step: $NextStep', 'cerebe-install: $Failure')
     }
