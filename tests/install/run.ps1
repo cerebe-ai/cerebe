@@ -219,7 +219,10 @@ function EC4 {
         $expected = if ($mode -eq 'init') { @('cerebe init', 'cerebe doctor') } elseif ($mode -in @('install', 'doctor-blocks')) { @('cerebe install', 'cerebe doctor') } else { @() }
         Assert (($calls -join ';') -eq ($expected -join ';')) "wrong setup dispatch for $mode"
         Assert (($case.Code -ne 0) -eq ($mode -eq 'doctor-blocks')) "wrong doctor status for $mode"
-        if ($mode -eq 'doctor-blocks') { Refusal-Message $case 'repository-doctor' }
+        if ($mode -eq 'doctor-blocks') {
+            Refusal-Message $case 'repository-doctor'
+            Assert ($case.Output.Contains('fixture doctor: blocking row')) 'blocking doctor diagnostic was lost'
+        }
         # POSIX oracle exercises the shipped install.sh under the same inputs.
         & "$PSScriptRoot/repo-parity.ps1" $case $mode $expected ($case.Code -ne 0)
     }
@@ -310,10 +313,14 @@ function EC15 {
     }
     Refusal-Message $missing 'archive-binary'
     Assert (!(Test-Path "$($missing.Directory)/install")) 'missing executable wrote install directory'
-    Refusal-Message (Case 'installed-command-fails' @{ STUB_FAIL_COMMAND = '--version' }) 'installed-binary'
-    Refusal-Message (Case 'setup-command-fails' @{ CEREBE_INSTALL_DIR = ''; STUB_FAIL_COMMAND = 'install' } {
+    $installedFailure = Case 'installed-command-fails' @{ STUB_FAIL_COMMAND = '--version' }
+    Refusal-Message $installedFailure 'installed-binary'
+    Assert ($installedFailure.Output.Contains('fixture command failed: --version')) 'installed command diagnostic was lost'
+    $setupFailure = Case 'setup-command-fails' @{ CEREBE_INSTALL_DIR = ''; STUB_FAIL_COMMAND = 'install' } {
         param($c); & git -C $c.Cwd init -q; Assert ($LASTEXITCODE -eq 0) 'git fixture failed'
-    }) 'repository-setup'
+    }
+    Refusal-Message $setupFailure 'repository-setup'
+    Assert ($setupFailure.Output.Contains('fixture command failed: install')) 'repository setup diagnostic was lost'
     Refused (Case 'unreadable-release-json' @{ CEREBE_RELEASE_JSON = "$work/absent.json" }) 'installer-operation'
     Refusal-Coverage $source
 

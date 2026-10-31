@@ -36,7 +36,8 @@
                 Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'
             } | Out-Null
         } catch {
-            Refuse 'download' "Download failed for ${Url}: $($_.Exception.Message)" 'Check access to GitHub and the release asset, then retry the installer'
+            $detail = $_.Exception.Message -replace '[\r\n]+', ' '
+            Refuse 'download' "Download failed for ${Url}: $detail" 'Check access to GitHub and the release asset, then retry the installer'
         }
     }
     function Asset-Url($Name) {
@@ -217,7 +218,8 @@
         Install-Cerebe
     } catch {
         if ($_.Exception.Message.StartsWith('cerebe-install: [')) { throw }
-        Refuse 'installer-operation' "Installer operation failed: $($_.Exception.Message)" 'Correct the file, JSON or permission error shown above, then retry the installer'
+        $detail = $_.Exception.Message -replace '[\r\n]+', ' '
+        Refuse 'installer-operation' "Installer operation failed: $detail" 'Correct the file, JSON or permission error shown above, then retry the installer'
     }
     finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
 }
