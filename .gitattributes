@@ -1,0 +1,2 @@
+# POSIX fixtures and the installer must remain executable in Windows Git Bash.
+*.sh text eol=lf

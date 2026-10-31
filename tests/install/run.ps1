@@ -220,3 +220,5 @@ try {
     [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Expected native refusals must not become GitHub's final shell exit status.
+exit 0
