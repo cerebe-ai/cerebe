@@ -8,6 +8,7 @@
 #   CEREBE_RELEASE_JSON  previously fetched release object; requires a version pin
 & {
     $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
     $CERT_IDENTITY = 'https://github.com/cerebe-ai/dark-factory/.github/workflows/cli-release.yml@refs/heads/main'
     $CERT_ISSUER = 'https://token.actions.githubusercontent.com'
     $PROVENANCE_SOURCE = 'github.com/cerebe-ai/dark-factory'

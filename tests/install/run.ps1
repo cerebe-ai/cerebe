@@ -32,7 +32,7 @@ function Expand-Archive($LiteralPath, $DestinationPath) {
     Microsoft.PowerShell.Archive\Expand-Archive -LiteralPath $LiteralPath -DestinationPath $DestinationPath
 }
 Set-Location -LiteralPath $case.Cwd
-& $case.Installer
+. $case.Installer
 '@
 Set-Content "$work/driver.ps1" $driver -Encoding ASCII
 function Hash($Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
@@ -214,7 +214,7 @@ try {
         foreach ($arch in @('amd64', 'arm64')) { Compress-Archive -LiteralPath "$work/$bin.exe" -DestinationPath "$work/base/${bin}_8.17.1_windows_$arch.zip" }
     }
     Write-Proof "$work/base"
-    $criteria = if ($Criterion -eq 'All') { @('EC1', 'EC2', 'EC3', 'EC4') } else { @($Criterion) }
+    $criteria = if ($Criterion -eq 'All') { @('EC1', 'EC2', 'EC3', 'EC4', 'EC5') } else { @($Criterion) }
     foreach ($test in $criteria) { & (Get-Item "function:$test") }
 } finally {
     [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')

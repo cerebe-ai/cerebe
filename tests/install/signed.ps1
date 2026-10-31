@@ -1,5 +1,6 @@
 # Official verifier bytes and signed v9.5.0 release, with no trust-anchor substitution.
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $work = Join-Path ([IO.Path]::GetTempPath()) ('cerebe-signed-' + [guid]::NewGuid())
 $source = Get-Content "$PSScriptRoot/../../install.ps1" -Raw
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'amd64' }
@@ -56,7 +57,7 @@ try {
         }
         Set-Content "$case/installer.ps1" $script -Encoding ASCII
         $rejected = $false
-        try { & "$case/installer.ps1" *> "$case/out" } catch { $rejected = $true; Add-Content "$case/out" $_.Exception.Message }
+        try { . "$case/installer.ps1" *> "$case/out" } catch { $rejected = $true; Add-Content "$case/out" $_.Exception.Message }
         if ($scenario -eq 'accepted') {
             if ($rejected) { throw (Get-Content "$case/out" -Raw) }
             foreach ($bin in @('cerebe', 'cyclone')) {
