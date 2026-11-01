@@ -1,0 +1,4 @@
+{
+  "posix": "curl -fsSL https://cerebe.ai/install.sh | sh",
+  "windows": "powershell -ExecutionPolicy ByPass -c \"irm https://cerebe.ai/install.ps1 | iex\""
+}

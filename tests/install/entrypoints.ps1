@@ -1,0 +1,145 @@
+#Requires -PSEdition Desktop
+# The native observer is built with Windows PowerShell 5.1's .NET Framework.
+# The existing Windows matrix separately tests install.ps1 with PowerShell 7.
+# Run the published command, or the checked-out shell handoff, with real trust
+# verification. A native observer records the environment after MSYS conversion.
+param(
+    [Parameter(Mandatory=$true)]
+    [ValidateSet('cmd', 'powershell', 'gitbash', 'msys2', 'cygwin')]
+    [string]$Shell,
+    [ValidateSet('native', 'posix')]
+    [string]$PathForm = 'native',
+    [string]$MsysRoot,
+    [string]$CygwinRoot
+)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$root = (Resolve-Path "$PSScriptRoot/../..").Path
+$commands = Get-Content "$root/install-commands.json" -Raw | ConvertFrom-Json
+$runtime = switch ($Shell) {
+    'gitbash' { @{ Bash = 'C:\Program Files\Git\bin\bash.exe'; Bin = 'C:\Program Files\Git\usr\bin'; OS = 'MINGW64' } }
+    'msys2' { @{ Bash = (Join-Path $MsysRoot 'usr/bin/bash.exe'); Bin = (Join-Path $MsysRoot 'usr/bin'); OS = 'MSYS' } }
+    'cygwin' { @{ Bash = (Join-Path $CygwinRoot 'bin/bash.exe'); Bin = (Join-Path $CygwinRoot 'bin'); OS = 'CYGWIN' } }
+}
+if ($PathForm -eq 'posix' -and !$runtime) { throw 'POSIX paths require a Windows POSIX runtime' }
+$work = Join-Path ([IO.Path]::GetTempPath()) ('cerebe entrypoints ' + [guid]::NewGuid())
+$saved = @{}
+Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|MSYS2_ENV_CONV_EXCL$|CEREBE_|HANDOFF_)' } | ForEach-Object { $saved[$_.Name] = $_.Value }
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+New-Item -ItemType Directory -Path "$work/shim", "$work/caller with spaces" -Force | Out-Null
+try {
+    $env:HANDOFF_POWERSHELL = (Get-Command powershell.exe).Source
+    $env:HANDOFF_TRACE = "$work/trace.json"
+    # Forward the original native command line, preserving its quoting. The
+    # observer makes no installer decisions and exits with the real PS result.
+    Add-Type -OutputAssembly "$work/shim/powershell.exe" -OutputType ConsoleApplication -ReferencedAssemblies System.Web.Extensions -TypeDefinition @'
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Web.Script.Serialization;
+public class ObservePowerShell {
+    public static int Main() {
+        var env = new Dictionary<string, string>();
+        foreach (DictionaryEntry item in Environment.GetEnvironmentVariables()) {
+            string key = (string)item.Key;
+            if (String.Equals(key, "CI", StringComparison.OrdinalIgnoreCase) || key.StartsWith("CEREBE_", StringComparison.OrdinalIgnoreCase))
+                env[key] = (string)item.Value;
+        }
+        File.WriteAllText(Environment.GetEnvironmentVariable("HANDOFF_TRACE"),
+            new JavaScriptSerializer().Serialize(new { cwd = Environment.CurrentDirectory, environment = env }));
+        string line = Environment.CommandLine;
+        int end = line[0] == '"' ? line.IndexOf('"', 1) + 1 : line.IndexOf(' ');
+        var start = new ProcessStartInfo(Environment.GetEnvironmentVariable("HANDOFF_POWERSHELL"), line.Substring(end).TrimStart());
+        start.UseShellExecute = false;
+        using (var child = Process.Start(start)) { child.WaitForExit(); return child.ExitCode; }
+    }
+}
+'@
+    $env:PATH = "$work/shim;$env:PATH"
+    # Force the installer to protect values that MSYS would otherwise rewrite;
+    # an inherited '*' would make that regression invisible to the observer.
+    [Environment]::SetEnvironmentVariable('MSYS2_ENV_CONV_EXCL', $null)
+    $env:CI = '/ci/literal:/second ci'
+    $env:CEREBE_PATH_SENTINEL = '/do/not/convert:/second path'
+    $env:CEREBE_SENTINEL = 'unicode ' + [char]0x03bb + "`nthird line"
+    $env:CEREBE_VERSION = '9.5.0'
+    $env:CEREBE_SKIP_REPO = '1'
+    $nativeInstall = Join-Path $work 'installed binaries'
+    $nativeRelease = Join-Path $work 'release.json'
+    $env:CEREBE_INSTALL_DIR = $nativeInstall
+    $env:CEREBE_RELEASE_JSON = $nativeRelease
+    $release = & gh api repositories/1181720228/releases/tags/v9.5.0
+    if ($LASTEXITCODE -ne 0) { throw 'authenticated release lookup failed' }
+    [IO.File]::WriteAllText($env:CEREBE_RELEASE_JSON, ($release -join "`n"))
+    if ($PathForm -eq 'posix') {
+        $env:CEREBE_INSTALL_DIR = & (Join-Path $runtime.Bin 'cygpath.exe') -u $nativeInstall
+        if ($LASTEXITCODE -ne 0) { throw 'install override conversion failed' }
+        $env:CEREBE_RELEASE_JSON = & (Join-Path $runtime.Bin 'cygpath.exe') -u $nativeRelease
+        if ($LASTEXITCODE -ne 0) { throw 'release override conversion failed' }
+    }
+    $expected = @{}
+    Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|CEREBE_)' } | ForEach-Object { $expected[$_.Name] = $_.Value }
+    if ($PathForm -eq 'posix') {
+        $expected['CEREBE_INSTALL_DIR'] = $nativeInstall
+        $expected['CEREBE_RELEASE_JSON'] = $nativeRelease
+    }
+    Push-Location "$work/caller with spaces"
+    try {
+        switch ($Shell) {
+            'cmd' {
+                [IO.File]::WriteAllText("$work/command.cmd", "@echo off`r`n$($commands.windows)`r`nexit /b %ERRORLEVEL%`r`n")
+                & cmd.exe /d /c "`"$work/command.cmd`""
+            }
+            'powershell' {
+                [IO.File]::WriteAllText("$work/command.ps1", "$($commands.windows)`r`nexit `$LASTEXITCODE`r`n")
+                & $env:HANDOFF_POWERSHELL -NoProfile -ExecutionPolicy ByPass -File "$work/command.ps1"
+            }
+            default {
+                # bash maps the inherited native working directory; avoid a
+                # login shell, which would deliberately cd to the user's home.
+                $env:HANDOFF_INSTALLER = "$root/install.sh"
+                $start = New-Object Diagnostics.ProcessStartInfo
+                $start.FileName = $runtime.Bash
+                $start.WorkingDirectory = (Get-Location).Path
+                $start.UseShellExecute = $false
+                $start.EnvironmentVariables['PATH'] = "$($runtime.Bin);$env:PATH"
+                $start.EnvironmentVariables['HANDOFF_EXPECTED_OS'] = $runtime.OS
+                if ($Shell -ne 'cygwin') { $start.EnvironmentVariables['MSYSTEM'] = $runtime.OS }
+                $driver = 'case "$(uname -s)" in "$HANDOFF_EXPECTED_OS"*) ;; *) echo "wrong POSIX runtime" >&2; exit 1 ;; esac' + "`n"
+                $driver += 'exec sh "$(cygpath -u "$HANDOFF_INSTALLER")"' + "`n"
+                $driverFile = Join-Path $work 'driver.sh'
+                $utf8 = New-Object Text.UTF8Encoding -ArgumentList $false
+                [IO.File]::WriteAllText($driverFile, $driver, $utf8)
+                $posixDriver = & (Join-Path $runtime.Bin 'cygpath.exe') -u $driverFile
+                if ($LASTEXITCODE -ne 0 -or !$posixDriver) { throw 'driver path conversion failed' }
+                $start.Arguments = '--noprofile --norc "' + $posixDriver + '"'
+                $child = [Diagnostics.Process]::Start($start)
+                $child.WaitForExit()
+                $LASTEXITCODE = $child.ExitCode
+                $child.Dispose()
+            }
+        }
+        if ($LASTEXITCODE -ne 0) { throw "$Shell install exited $LASTEXITCODE" }
+        $trace = Get-Content $env:HANDOFF_TRACE -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($trace.cwd -ne (Get-Location).Path) { throw "$Shell changed the working directory" }
+        if (@($trace.environment.PSObject.Properties).Count -ne $expected.Count) { throw "$Shell changed the environment keys" }
+        foreach ($key in $expected.Keys) {
+            $actual = $trace.environment.$key
+            if ($PathForm -eq 'posix' -and $key -in @('CEREBE_INSTALL_DIR', 'CEREBE_RELEASE_JSON')) {
+                if ([IO.Path]::GetFullPath($actual) -ine [IO.Path]::GetFullPath($expected[$key])) { throw "$Shell changed path meaning for $key" }
+            } elseif ($actual -cne $expected[$key]) { throw "$Shell changed environment variable $key" }
+        }
+        foreach ($name in @('cerebe', 'cyclone')) {
+            $version = & "$nativeInstall/$name.exe" --version
+            if ($LASTEXITCODE -ne 0 -or "$version" -notmatch '(^|\s)v?9\.5\.0($|\s)') { throw "$name installed version mismatch" }
+        }
+        Write-Output "PASS $Shell ($PathForm paths) verified both signed binaries; cwd, CI and overrides preserved"
+    } finally { Pop-Location }
+} finally {
+    [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
+    Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|MSYS2_ENV_CONV_EXCL$|CEREBE_|HANDOFF_)' } | ForEach-Object { [Environment]::SetEnvironmentVariable($_.Name, $null) }
+    foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+    Remove-Item -LiteralPath $work -Recurse -Force
+}

@@ -3,13 +3,17 @@ name: install-test
 # Offline regression tests for install.sh (tests/install/run.sh): the real
 # script runs against a stubbed curl, a fixture API response and locally
 # built release assets. The signed job is the exception: it downloads the
-# published v9.5.0 release and verifies it. No secrets.
+# published v9.5.0 release and verifies it. The entrypoints matrix exercises
+# the deployed /install.ps1 URL after its redirect lands (Cycle 136 EC6);
+# the existing Windows matrix tests the checked-out install.ps1. No secrets.
 
 on:
   pull_request:
     paths:
       - "install.sh"
       - "install.ps1"
+      - "install-commands.json"
+      - "README.md"
       - "tests/install/**"
       - "tests/setup/**"
       - "setup/**"
@@ -19,6 +23,8 @@ on:
     paths:
       - "install.sh"
       - "install.ps1"
+      - "install-commands.json"
+      - "README.md"
       - "tests/install/**"
       - "tests/setup/**"
       - "setup/**"
@@ -33,6 +39,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  readme:
+    name: canonical README commands
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check both commands against their single source
+        run: python3 tests/install/readme.py
+
+  entrypoints:
+    name: windows-2025 · ${{ matrix.entrypoint }} · signed entrypoint
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
+    strategy:
+      fail-fast: false
+      matrix:
+        entrypoint: [cmd, powershell, gitbash, msys2, cygwin]
+    steps:
+      - name: Keep shell scripts in LF form
+        run: git config --global core.autocrlf input
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: MSYS2
+        if: matrix.entrypoint == 'msys2'
+        id: msys2
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MSYS
+          update: false
+      - name: Cygwin
+        if: matrix.entrypoint == 'cygwin'
+        id: cygwin
+        uses: cygwin/cygwin-install-action@5a1b0cd107181fa6bb6bf3f90d500f4fb3132f18 # v7
+        with:
+          packages: bash coreutils
+          add-to-path: false
+      - name: Verify command, handoff environment and installed versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./tests/install/entrypoints.ps1 -Shell '${{ matrix.entrypoint }}'
+          -MsysRoot '${{ steps.msys2.outputs.msys2-location }}'
+          -CygwinRoot '${{ steps.cygwin.outputs.root }}'
+      - name: Verify POSIX absolute path overrides through the real runtime
+        if: matrix.entrypoint == 'gitbash' || matrix.entrypoint == 'msys2' || matrix.entrypoint == 'cygwin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./tests/install/entrypoints.ps1 -Shell '${{ matrix.entrypoint }}' -PathForm posix
+          -MsysRoot '${{ steps.msys2.outputs.msys2-location }}'
+          -CygwinRoot '${{ steps.cygwin.outputs.root }}'
+
   windows:
     name: ${{ matrix.os }} · ${{ matrix.shell }} · offline and signed
     runs-on: ${{ matrix.os }}
@@ -85,6 +146,10 @@ jobs:
         env:
           TEST_SH: ${{ matrix.shell }}
         run: sh tests/install/run.sh
+      - name: Offline Windows handoff tests
+        env:
+          TEST_SH: ${{ matrix.shell }}
+        run: sh tests/install/windows-handoff.sh
 
   busybox:
     name: alpine · busybox sh
@@ -96,6 +161,8 @@ jobs:
 
       - name: Offline installer tests (busybox sh, sed, awk, tar, sha256sum)
         run: docker run --rm -v "$PWD:/w:ro" -w /w alpine:3 sh tests/install/run.sh
+      - name: Offline Windows handoff tests (busybox sh)
+        run: docker run --rm -v "$PWD:/w:ro" -w /w alpine:3 sh tests/install/windows-handoff.sh
 
   signed:
     name: signed v9.5.0
@@ -117,7 +184,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: shellcheck
-        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
+        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/windows-handoff.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
 
       - name: Setup action pins the verifiers and runs install.sh
         run: sh tests/setup/run.sh

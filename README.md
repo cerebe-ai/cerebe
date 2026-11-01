@@ -20,8 +20,16 @@
 
 ## Install
 
+macOS and Linux:
+
 ```bash
 curl -fsSL https://cerebe.ai/install.sh | sh
+```
+
+Windows (Command Prompt or PowerShell):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://cerebe.ai/install.ps1 | iex"
 ```
 
 Run it **from the repo you want to adopt**. It puts the compiled `cerebe` and `cyclone`
@@ -29,12 +37,17 @@ binaries on your PATH and — when you run it inside a git repo on your computer
 that repo up. Before it extracts anything, it checks the release's keyless checksum
 signature and SLSA provenance, then each archive's sha256. A release with no signature
 or no provenance is refused. There is no flag to skip that. No npm, no pip, no Docker.
-Needs only `curl` and `git`; macOS and Linux run the binaries, Windows uses the archives below.
+On macOS and Linux, use `curl` and `git`; on Windows, use PowerShell and `git`.
+Git Bash, MSYS2 and Cygwin can use the POSIX command: it delegates to PowerShell.
+POSIX absolute `CEREBE_INSTALL_DIR` and `CEREBE_RELEASE_JSON` paths are translated
+through the runtime's `cygpath`; native and relative paths stay as supplied.
+`CI` and all other `CEREBE_` values pass through unchanged.
 
-- **Pin a version:** `CEREBE_VERSION=9.5.0 curl -fsSL … | sh` (the first signed stable; older releases are refused)
+- **Pin a version (POSIX):** `curl -fsSL … | CEREBE_VERSION=9.5.0 sh` (the first signed stable; older releases are refused)
 - **Binaries only** (CI, or don't touch the repo): set `CI=1` or `CEREBE_SKIP_REPO=1`.
-- **Windows:** download the `cerebe_*_windows_*.zip` and `cyclone_*_windows_*.zip` archives
-  from [Releases](https://github.com/cerebe-ai/cerebe/releases) and put them on your PATH.
+- **Manual Windows install:** if you cannot run PowerShell, download the
+  `cerebe_*_windows_*.zip` and `cyclone_*_windows_*.zip` archives from
+  [Releases](https://github.com/cerebe-ai/cerebe/releases) and put them on your PATH.
 
 Already have the binaries and cloned a repo that's **already** set up for Cerebe? Skip the
 curl and just run `cerebe init` in it to wire your local hooks to the committed contract.
