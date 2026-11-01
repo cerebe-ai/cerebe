@@ -88,8 +88,20 @@ public class ObservePowerShell {
                 $start.WorkingDirectory = (Get-Location).Path
                 $start.UseShellExecute = $false
                 $start.RedirectStandardInput = $true
+                $posixBin = Split-Path $bash
+                if ($Shell -eq 'gitbash') { $posixBin = 'C:\Program Files\Git\usr\bin' }
+                $osPrefix = switch ($Shell) {
+                    'gitbash' { 'MINGW64' }
+                    'msys2' { 'MSYS' }
+                    'cygwin' { 'CYGWIN' }
+                }
+                $start.EnvironmentVariables['PATH'] = "$posixBin;$env:PATH"
+                $start.EnvironmentVariables['HANDOFF_EXPECTED_OS'] = $osPrefix
+                if ($Shell -ne 'cygwin') { $start.EnvironmentVariables['MSYSTEM'] = $osPrefix }
                 $child = [Diagnostics.Process]::Start($start)
-                $child.StandardInput.Write('exec sh "$(cygpath -u "$HANDOFF_INSTALLER")"' + "`n")
+                $driver = 'case "$(uname -s)" in "$HANDOFF_EXPECTED_OS"*) ;; *) echo "wrong POSIX runtime" >&2; exit 1 ;; esac' + "`n"
+                $driver += 'exec sh "$(cygpath -u "$HANDOFF_INSTALLER")"' + "`n"
+                $child.StandardInput.Write($driver)
                 $child.StandardInput.Close()
                 $child.WaitForExit()
                 $LASTEXITCODE = $child.ExitCode
