@@ -25,22 +25,29 @@ shell_path=$(command -v "$1")
 shift
 export CI='ci /literal:with spaces' CEREBE_INSTALL_DIR='C:\caller path\bin'
 export CEREBE_SENTINEL='/literal/path:/second path' CEREBE_EMPTY=''
-export MSYS2_ENV_CONV_EXCL='KEEP_ME'
 export HANDOFF_TRACE="$W/trace"
 for HANDOFF_OS in MINGW64_NT-10.0 MSYS_NT-10.0 CYGWIN_NT-10.0; do
   export HANDOFF_OS
-  for HANDOFF_EXIT in 0 37; do
-    export HANDOFF_EXIT
-    code=0
-    (cd "$W/caller with spaces"; PATH="$W/bin" "$shell_path" "$@" "$INSTALLER") \
-      > "$W/output" 2>&1 || code=$?
-    [ "$code" -eq "$HANDOFF_EXIT" ] || { cat "$W/output"; exit 1; }
-    printf '%s\n' "$W/caller with spaces" "$CI" "$CEREBE_INSTALL_DIR" \
-      "$CEREBE_SENTINEL" "$CEREBE_EMPTY" 'KEEP_ME;CI=;CEREBE_' \
-      -NoProfile -ExecutionPolicy ByPass -Command \
-      'irm https://cerebe.ai/install.ps1 | iex' > "$W/expected"
-    diff -u "$W/expected" "$HANDOFF_TRACE"
-    echo "ok: $HANDOFF_OS delegates with cwd/env/arguments and exit $HANDOFF_EXIT"
+  for MSYS2_ENV_CONV_EXCL in '' KEEP_ME '*'; do
+    export MSYS2_ENV_CONV_EXCL
+    case "$MSYS2_ENV_CONV_EXCL" in
+      '*') expected_exclusion='*' ;;
+      '') expected_exclusion='CI=;CEREBE_' ;;
+      *) expected_exclusion='KEEP_ME;CI=;CEREBE_' ;;
+    esac
+    for HANDOFF_EXIT in 0 37; do
+      export HANDOFF_EXIT
+      code=0
+      (cd "$W/caller with spaces"; PATH="$W/bin" "$shell_path" "$@" "$INSTALLER") \
+        > "$W/output" 2>&1 || code=$?
+      [ "$code" -eq "$HANDOFF_EXIT" ] || { cat "$W/output"; exit 1; }
+      printf '%s\n' "$W/caller with spaces" "$CI" "$CEREBE_INSTALL_DIR" \
+        "$CEREBE_SENTINEL" "$CEREBE_EMPTY" "$expected_exclusion" \
+        -NoProfile -ExecutionPolicy ByPass -Command \
+        'irm https://cerebe.ai/install.ps1 | iex' > "$W/expected"
+      diff -u "$W/expected" "$HANDOFF_TRACE"
+      echo "ok: $HANDOFF_OS delegates with cwd/env/arguments and exit $HANDOFF_EXIT"
+    done
   done
 done
 rm "$W/bin/powershell.exe"

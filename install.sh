@@ -75,7 +75,9 @@ os=$(uname -s)
 case "$os" in
   MINGW*|MSYS*|CYGWIN*)
     need powershell.exe
-    export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}CI=;CEREBE_"
+    if [ "${MSYS2_ENV_CONV_EXCL:-}" != '*' ]; then
+      export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}CI=;CEREBE_"
+    fi
     exec powershell.exe -NoProfile -ExecutionPolicy ByPass -Command 'irm https://cerebe.ai/install.ps1 | iex'
     ;;
 esac
