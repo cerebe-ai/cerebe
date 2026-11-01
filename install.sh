@@ -75,6 +75,24 @@ os=$(uname -s)
 case "$os" in
   MINGW*|MSYS*|CYGWIN*)
     need powershell.exe
+    # Translate only path-valued POSIX inputs at the native-process boundary.
+    # Destination defaults and user PATH still belong entirely to install.ps1.
+    case "${CEREBE_INSTALL_DIR:-}" in
+      //[!/]*) ;; # Native UNC, including its forward-slash spelling.
+      /*)
+        need cygpath
+        CEREBE_INSTALL_DIR=$(cygpath -w "$CEREBE_INSTALL_DIR") || err "could not translate CEREBE_INSTALL_DIR"
+        export CEREBE_INSTALL_DIR
+        ;;
+    esac
+    case "${CEREBE_RELEASE_JSON:-}" in
+      //[!/]*) ;;
+      /*)
+        need cygpath
+        CEREBE_RELEASE_JSON=$(cygpath -w "$CEREBE_RELEASE_JSON") || err "could not translate CEREBE_RELEASE_JSON"
+        export CEREBE_RELEASE_JSON
+        ;;
+    esac
     if [ "${MSYS2_ENV_CONV_EXCL:-}" != '*' ]; then
       export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}CI=;CEREBE_"
     fi

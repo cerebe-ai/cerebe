@@ -9,11 +9,11 @@ from pathlib import Path
 import sys
 
 root = Path(__file__).resolve().parents[2]
-commands = json.loads((root / "install-commands.json").read_text())
+commands = json.loads((root / "install-commands.json").read_text(encoding="utf-8"))
 if set(commands) != {"posix", "windows"}:
     sys.exit("install-commands.json must define both posix and windows")
 readme = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "README.md"
-text = readme.read_text()
+text = readme.read_text(encoding="utf-8")
 for name, command in commands.items():
     if text.count("\n" + command + "\n") != 1:
         sys.exit(f"README must show the canonical {name} command exactly once")

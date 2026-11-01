@@ -3,7 +3,9 @@ name: install-test
 # Offline regression tests for install.sh (tests/install/run.sh): the real
 # script runs against a stubbed curl, a fixture API response and locally
 # built release assets. The signed job is the exception: it downloads the
-# published v9.5.0 release and verifies it. No secrets.
+# published v9.5.0 release and verifies it. The entrypoints matrix exercises
+# the deployed /install.ps1 URL after its redirect lands (Cycle 136 EC6);
+# the existing Windows matrix tests the checked-out install.ps1. No secrets.
 
 on:
   pull_request:
@@ -81,6 +83,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           ./tests/install/entrypoints.ps1 -Shell '${{ matrix.entrypoint }}'
+          -MsysRoot '${{ steps.msys2.outputs.msys2-location }}'
+          -CygwinRoot '${{ steps.cygwin.outputs.root }}'
+      - name: Verify POSIX absolute path overrides through the real runtime
+        if: matrix.entrypoint == 'gitbash' || matrix.entrypoint == 'msys2' || matrix.entrypoint == 'cygwin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          ./tests/install/entrypoints.ps1 -Shell '${{ matrix.entrypoint }}' -PathForm posix
           -MsysRoot '${{ steps.msys2.outputs.msys2-location }}'
           -CygwinRoot '${{ steps.cygwin.outputs.root }}'
 
@@ -174,7 +184,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: shellcheck
-        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
+        run: shellcheck --version && shellcheck -s sh install.sh tests/install/run.sh tests/install/windows-handoff.sh tests/install/signed-v9.5.0.sh tests/setup/run.sh
 
       - name: Setup action pins the verifiers and runs install.sh
         run: sh tests/setup/run.sh

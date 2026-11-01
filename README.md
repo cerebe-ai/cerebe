@@ -39,6 +39,9 @@ signature and SLSA provenance, then each archive's sha256. A release with no sig
 or no provenance is refused. There is no flag to skip that. No npm, no pip, no Docker.
 On macOS and Linux, use `curl` and `git`; on Windows, use PowerShell and `git`.
 Git Bash, MSYS2 and Cygwin can use the POSIX command: it delegates to PowerShell.
+POSIX absolute `CEREBE_INSTALL_DIR` and `CEREBE_RELEASE_JSON` paths are translated
+through the runtime's `cygpath`; native and relative paths stay as supplied.
+`CI` and all other `CEREBE_` values pass through unchanged.
 
 - **Pin a version (POSIX):** `curl -fsSL … | CEREBE_VERSION=9.5.0 sh` (the first signed stable; older releases are refused)
 - **Binaries only** (CI, or don't touch the repo): set `CI=1` or `CEREBE_SKIP_REPO=1`.
