@@ -13,7 +13,7 @@ $root = (Resolve-Path "$PSScriptRoot/../..").Path
 $commands = Get-Content "$root/install-commands.json" -Raw | ConvertFrom-Json
 $work = Join-Path ([IO.Path]::GetTempPath()) ('cerebe entrypoints ' + [guid]::NewGuid())
 $saved = @{}
-Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|CEREBE_|HANDOFF_)' } | ForEach-Object { $saved[$_.Name] = $_.Value }
+Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|MSYS2_ENV_CONV_EXCL$|CEREBE_|HANDOFF_)' } | ForEach-Object { $saved[$_.Name] = $_.Value }
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 New-Item -ItemType Directory -Path "$work/shim", "$work/caller with spaces" -Force | Out-Null
 try {
@@ -47,8 +47,12 @@ public class ObservePowerShell {
 }
 '@
     $env:PATH = "$work/shim;$env:PATH"
-    $env:CI = 'ci /literal:with spaces'
-    $env:CEREBE_SENTINEL = '/do/not/convert:/second path' + [char]0x03bb + "`nthird line"
+    # Force the installer to protect values that MSYS would otherwise rewrite;
+    # an inherited '*' would make that regression invisible to the observer.
+    [Environment]::SetEnvironmentVariable('MSYS2_ENV_CONV_EXCL', $null)
+    $env:CI = '/ci/literal:/second ci'
+    $env:CEREBE_PATH_SENTINEL = '/do/not/convert:/second path'
+    $env:CEREBE_SENTINEL = 'unicode ' + [char]0x03bb + "`nthird line"
     $env:CEREBE_VERSION = '9.5.0'
     $env:CEREBE_SKIP_REPO = '1'
     $env:CEREBE_INSTALL_DIR = "$work/installed binaries"
@@ -107,7 +111,7 @@ public class ObservePowerShell {
     } finally { Pop-Location }
 } finally {
     [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
-    Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|CEREBE_|HANDOFF_)' } | ForEach-Object { [Environment]::SetEnvironmentVariable($_.Name, $null) }
+    Get-ChildItem Env: | Where-Object { $_.Name -match '^(CI$|PATH$|MSYS2_ENV_CONV_EXCL$|CEREBE_|HANDOFF_)' } | ForEach-Object { [Environment]::SetEnvironmentVariable($_.Name, $null) }
     foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
     Remove-Item -LiteralPath $work -Recurse -Force
 }
