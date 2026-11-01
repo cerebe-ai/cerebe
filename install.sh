@@ -69,6 +69,17 @@ log()  { printf '  %s\n' "$*"; }
 err()  { printf 'cerebe-install: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || err "required tool not found: $1"; }
 
+# Delegate before requiring POSIX archive/checksum tools. Native PowerShell
+# inherits this directory; prevent MSYS from rewriting caller overrides.
+os=$(uname -s)
+case "$os" in
+  MINGW*|MSYS*|CYGWIN*)
+    need powershell.exe
+    export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+${MSYS2_ENV_CONV_EXCL};}CI=;CEREBE_"
+    exec powershell.exe -NoProfile -ExecutionPolicy ByPass -Command 'irm https://cerebe.ai/install.ps1 | iex'
+    ;;
+esac
+
 need curl
 need tar
 # One of sha256sum / shasum must exist for integrity verification.
@@ -77,11 +88,11 @@ elif command -v shasum   >/dev/null 2>&1; then SHACHK="shasum -a 256 -c";
 else err "need sha256sum or shasum for checksum verification"; fi
 
 # --- detect os/arch → the GoReleaser asset suffix -------------------------
-os=$(uname -s); arch=$(uname -m)
+arch=$(uname -m)
 case "$os" in
   Linux)  OS=linux ;;
   Darwin) OS=darwin ;;
-  *) err "unsupported OS: $os (Windows: download the .zip from the Releases page)";;
+  *) err "unsupported OS: $os";;
 esac
 case "$arch" in
   x86_64|amd64) ARCH=amd64 ;;
